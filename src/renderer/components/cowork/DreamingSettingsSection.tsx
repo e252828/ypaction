@@ -641,7 +641,7 @@ const DreamingSettingsSection: React.FC<DreamingSettingsSectionProps> = ({
 
   const [dreamingStatus, setDreamingStatus] = useState<DreamingStatusData | null>(null);
   const [dreamDiary, setDreamDiary] = useState<DreamDiaryData | null>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
+  const [_statusLoading, setStatusLoading] = useState(false);
   const [diaryLoading, setDiaryLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -753,18 +753,11 @@ const DreamingSettingsSection: React.FC<DreamingSettingsSectionProps> = ({
     }
   }, [dreamingEnabled, fetchDreamingStatus, fetchDreamDiary]);
 
-  const refreshDreamingData = useCallback(() => {
-    void fetchDreamingStatus();
-    void fetchDreamDiary();
-  }, [fetchDreamingStatus, fetchDreamDiary]);
-
   const contentTabs = [
     { key: 'scene' as const, labelKey: 'coworkDreamingSubTabScene' },
     { key: 'diary' as const, labelKey: 'coworkDreamingSubTabDiary' },
     { key: 'advanced' as const, labelKey: 'coworkDreamingSubTabAdvanced' },
   ];
-
-  const isRefreshing = statusLoading || diaryLoading;
 
   return (
     <div className="space-y-3">
