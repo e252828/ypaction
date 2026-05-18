@@ -220,26 +220,30 @@ const MINIMAX_TOKEN_ENDPOINT_GLOBAL = 'https://api.minimax.io/oauth/token';
 
 // Context Window slider constants & helpers
 const CW_MIN = 1000;
-const CW_MAX = 1_000_000;
+const CW_MAX = 2_000_000;
 const CW_LOG_MIN = Math.log(CW_MIN);
 const CW_LOG_MAX = Math.log(CW_MAX);
 const CW_DEFAULT = 200_000;
+const CW_SCALE_EXP = 1.5; // >1 compresses lower range, expands upper range
 
 function contextWindowToSlider(value: number): number {
-  return (Math.log(Math.max(CW_MIN, Math.min(CW_MAX, value))) - CW_LOG_MIN) / (CW_LOG_MAX - CW_LOG_MIN);
+  const t = (Math.log(Math.max(CW_MIN, Math.min(CW_MAX, value))) - CW_LOG_MIN) / (CW_LOG_MAX - CW_LOG_MIN);
+  return Math.pow(t, CW_SCALE_EXP);
 }
 function sliderToContextWindow(t: number): number {
-  return Math.round(Math.exp(CW_LOG_MIN + t * (CW_LOG_MAX - CW_LOG_MIN)) / 1000) * 1000;
+  const logT = Math.pow(Math.max(0, Math.min(1, t)), 1 / CW_SCALE_EXP);
+  return Math.round(Math.exp(CW_LOG_MIN + logT * (CW_LOG_MAX - CW_LOG_MIN)) / 1000) * 1000;
 }
 const CW_MARKER_STOPS = [
-  { label: '0', value: CW_MIN },
+  { label: '1K', value: CW_MIN },
   { label: '4K', value: 4000 },
   { label: '8K', value: 8000 },
   { label: '16K', value: 16000 },
   { label: '32K', value: 32000 },
   { label: '64K', value: 64000 },
   { label: '200K', value: 200000 },
-  { label: '1M', value: CW_MAX },
+  { label: '1M', value: 1000000 },
+  { label: '2M', value: CW_MAX },
 ].map(m => ({ ...m, pos: contextWindowToSlider(m.value) }));
 
 type MiniMaxRegion = 'cn' | 'global';
@@ -5017,7 +5021,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                           const v = parseInt(e.target.value, 10);
                           if (!isNaN(v)) setNewModelContextWindow(Math.max(CW_MIN, Math.min(CW_MAX, v)));
                         }}
-                        className="w-24 rounded-lg bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-2.5 py-1 text-xs text-right tabular-nums"
+                        className="w-24 rounded-lg bg-surface-inset border-border border focus:border-primary focus:ring-1 focus:ring-primary/30 text-foreground px-2.5 py-1 text-xs text-center tabular-nums"
                       />
                     </div>
                     {/* Track + dots + slider */}
