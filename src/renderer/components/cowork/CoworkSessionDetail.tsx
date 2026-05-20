@@ -8,6 +8,12 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo,useRef, useStat
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
+import {
+  ContextCompactionMode,
+  ContextCompactionStatus,
+  CoworkSystemMessageKind,
+  isInternalCompactionSystemText,
+} from '../../../common/coworkSystemMessages';
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
 import { normalizeFilePathForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseMediaTokensFromText, parseToolArtifact, stripFileLinksFromText } from '../../services/artifactParser';
 import { coworkService } from '../../services/cowork';
@@ -738,7 +744,13 @@ const isSilentAssistantMessage = (message: CoworkMessage): boolean => (
 );
 
 const isContextCompactionMessage = (message: CoworkMessage): boolean => (
-  message.type === 'system' && message.metadata?.kind === 'context_compaction'
+  message.type === 'system' && message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction
+);
+
+const isLegacyInternalCompactionSystemMessage = (message: CoworkMessage): boolean => (
+  message.type === 'system'
+  && !message.metadata?.kind
+  && isInternalCompactionSystemText(message.content)
 );
 
 const ContextCompressionIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
@@ -798,6 +810,9 @@ export const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
 
   for (const message of messages) {
     if (isSilentAssistantMessage(message)) {
+      continue;
+    }
+    if (isLegacyInternalCompactionSystemMessage(message)) {
       continue;
     }
 
@@ -912,6 +927,9 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
 
 const isRenderableAssistantOrSystemMessage = (message: CoworkMessage): boolean => {
   if (isSilentAssistantMessage(message)) {
+    return false;
+  }
+  if (isLegacyInternalCompactionSystemMessage(message)) {
     return false;
   }
   if (hasText(message.content) || hasText(message.metadata?.error)) {
@@ -1568,6 +1586,27 @@ const ThinkingBlock: React.FC<{
   );
 };
 
+const getContextCompactionMessageLabel = (message: CoworkMessage, fallbackContent: string): string => {
+  if (message.metadata?.mode === ContextCompactionMode.Manual && fallbackContent.trim()) {
+    return fallbackContent;
+  }
+
+  switch (message.metadata?.status) {
+    case ContextCompactionStatus.Running:
+      return i18nService.t('coworkContextCompactionRunning');
+    case ContextCompactionStatus.Retrying:
+      return i18nService.t('coworkContextCompactionRetrying');
+    case ContextCompactionStatus.Failed:
+      return i18nService.t('coworkContextCompactionFailed');
+    case ContextCompactionStatus.Completed:
+      return i18nService.t('coworkContextCompactionCompleted');
+    default:
+      return fallbackContent.trim()
+        ? fallbackContent
+        : i18nService.t('coworkContextCompactionCompleted');
+  }
+};
+
 export const AssistantTurnBlock: React.FC<{
   turn: ConversationTurn;
   artifacts?: Artifact[];
@@ -1592,10 +1631,16 @@ export const AssistantTurnBlock: React.FC<{
       : (typeof message.metadata?.error === 'string' ? message.metadata.error : '');
     const normalizedContent = getScheduledReminderDisplayText(rawContent) ?? rawContent;
     const content = mapDisplayText ? mapDisplayText(normalizedContent) : normalizedContent;
-    if (!content.trim()) return null;
+    if (!content.trim() && !isContextCompactionMessage(message)) return null;
 
     if (isContextCompactionMessage(message)) {
-      return <ContextCompactionDivider label={content} />;
+      const status = message.metadata?.status;
+      return (
+        <ContextCompactionDivider
+          label={getContextCompactionMessageLabel(message, content)}
+          active={status === ContextCompactionStatus.Running}
+        />
+      );
     }
 
     return (

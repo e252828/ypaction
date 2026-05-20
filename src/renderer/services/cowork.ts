@@ -1,4 +1,9 @@
 import { classifyErrorKey } from '../../common/coworkErrorClassify';
+import {
+  ContextCompactionMode,
+  ContextCompactionStatus,
+  CoworkSystemMessageKind,
+} from '../../common/coworkSystemMessages';
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
 import { COWORK_SESSION_PAGE_SIZE } from '../../shared/cowork/constants';
 import { store } from '../store';
@@ -297,21 +302,6 @@ class CoworkService {
         sessionId: usage.sessionId,
         compactionCount: nextCount,
       }));
-      store.dispatch(addMessage({
-        sessionId: usage.sessionId,
-        message: {
-          id: `context-compaction-${usage.sessionId}-${nextCount}-${Date.now()}`,
-          type: 'system',
-          content: i18nService.t('coworkContextAutoCompacted'),
-          timestamp: Date.now(),
-          metadata: {
-            kind: 'context_compaction',
-            mode: 'auto',
-            compactionCount: nextCount,
-            compacted: true,
-          },
-        },
-      }));
     }
   }
 
@@ -378,8 +368,11 @@ class CoworkService {
               : i18nService.t('coworkContextManualCompactNoop'),
             timestamp: Date.now(),
             metadata: {
-              kind: 'context_compaction',
-              mode: 'manual',
+              kind: CoworkSystemMessageKind.ContextCompaction,
+              mode: ContextCompactionMode.Manual,
+              status: result.compacted
+                ? ContextCompactionStatus.Completed
+                : ContextCompactionStatus.Failed,
               compacted: result.compacted === true,
             },
           },

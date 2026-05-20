@@ -903,6 +903,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkContextAutoCompacted: '上下文压缩已完成',
     coworkContextManualCompacted: '上下文压缩已完成',
     coworkContextManualCompactNoop: '当前上下文无需压缩',
+    coworkContextCompactionRunning: '上下文压缩中',
+    coworkContextCompactionCompleted: '上下文压缩已完成',
+    coworkContextCompactionRetrying: '上下文压缩已完成，正在继续任务',
+    coworkContextCompactionFailed: '上下文压缩未完成',
 
     // Cowork 错误消息
     coworkErrorAuthInvalid: 'API 密钥无效或已过期，请在设置中检查并更新您的 API 密钥。',
@@ -2854,6 +2858,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkContextAutoCompacted: 'Context compaction completed',
     coworkContextManualCompacted: 'Context compaction completed',
     coworkContextManualCompactNoop: 'No context compaction was needed',
+    coworkContextCompactionRunning: 'Compacting context',
+    coworkContextCompactionCompleted: 'Context compaction completed',
+    coworkContextCompactionRetrying: 'Context compaction completed, continuing task',
+    coworkContextCompactionFailed: 'Context compaction did not complete',
 
     // Cowork error messages
     coworkErrorAuthInvalid:

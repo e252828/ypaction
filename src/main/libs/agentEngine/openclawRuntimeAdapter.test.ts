@@ -12,6 +12,10 @@ vi.mock('electron', () => ({
   },
 }));
 
+import {
+  ContextCompactionStatus,
+  CoworkSystemMessageKind,
+} from '../../../common/coworkSystemMessages';
 import { OpenClawRuntimeAdapter, pickPersistedAssistantSegment } from './openclawRuntimeAdapter';
 
 test('pickPersistedAssistantSegment: stream authority keeps previous when same length or longer', () => {
@@ -890,6 +894,113 @@ test('lifecycle fallback backfills missing tool result for the current turn', as
   expect(session.status).toBe('completed');
 });
 
+test('lifecycle fallback waits when history sync returns a short assistant segment after large tool results', async () => {
+  vi.useFakeTimers();
+  try {
+    const interimAnswer = 'Let me check the main log around that time before I give the conclusion.';
+    const finalAnswer = `Final answer: the retry after context compaction continued the same OpenClaw run. ${
+      'The client must keep the turn open until the retry attempt reaches a stable final event, and the closed-run guard must not drop the same run id continuation. '.repeat(5)
+    }`;
+    const largeToolResult = 'gateway log line with context overflow evidence\n'.repeat(900);
+    let historyAnswer = interimAnswer;
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'analyze the latest logs', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'tool_use', content: 'Using grep', timestamp: 2, metadata: { toolUseId: 'call-grep' } },
+      { id: 'msg-3', type: 'tool_result', content: 'partial log output', timestamp: 3, metadata: { toolUseId: 'call-grep' } },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const completeSpy = vi.fn();
+    const maintenanceSpy = vi.fn();
+
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async (method: string) => {
+        if (method !== 'chat.history') return {};
+        return {
+          messages: [
+            { role: 'user', content: 'analyze the latest logs' },
+            {
+              role: 'assistant',
+              content: [
+                { type: 'toolCall', id: 'call-grep', name: 'exec', arguments: { command: 'grep restart gateway.log' } },
+              ],
+            },
+            { role: 'toolResult', toolCallId: 'call-grep', content: largeToolResult },
+            { role: 'assistant', content: historyAnswer },
+          ],
+        };
+      },
+    };
+
+    session.status = 'running';
+    adapter.on('complete', completeSpy);
+    adapter.on('contextMaintenance', maintenanceSpy);
+    const turn = createActiveTurn(session.id, sessionKey, 'run-lifecycle-retry');
+    turn.toolUseMessageIdByToolCallId.set('call-grep', 'msg-2');
+    turn.toolResultMessageIdByToolCallId.set('call-grep', 'msg-3');
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+    adapter.rememberSessionKey(session.id, sessionKey);
+
+    adapter.handleAgentEvent({
+      runId: 'run-lifecycle-retry',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    }, 1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(completeSpy).not.toHaveBeenCalled();
+    expect(session.status).toBe('running');
+    expect(maintenanceSpy).toHaveBeenCalledWith(session.id, true);
+    expect(adapter.activeTurns.get(session.id)?.pendingOpenClawRetry).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'assistant'
+      && message.content === interimAnswer
+    ))).toBe(true);
+
+    historyAnswer = finalAnswer;
+    adapter.handleAgentEvent({
+      runId: 'run-lifecycle-retry',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    }, 2);
+    adapter.processAgentAssistantText({
+      runId: 'run-lifecycle-retry',
+      sessionKey,
+      stream: 'assistant',
+      data: { text: finalAnswer },
+    });
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, false);
+    expect(session.messages.some((message) => (
+      message.type === 'assistant'
+      && message.content.includes('Final answer: the retry after context compaction')
+    ))).toBe(true);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-lifecycle-retry',
+      sessionKey,
+      message: { role: 'assistant', content: finalAnswer },
+    }, 3);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(completeSpy).toHaveBeenCalledWith(session.id, 'run-lifecycle-retry');
+    expect(session.status).toBe('completed');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('chat final backfills only current-turn tool results from history', async () => {
   vi.useFakeTimers();
   try {
@@ -1119,6 +1230,56 @@ test('late event for a closed run does not recreate a managed session turn', () 
   expect(session.status).toBe('completed');
   expect(adapter.activeTurns.has(session.id)).toBe(false);
   expect(adapter.sessionIdByRunId.has('closed-run')).toBe(false);
+});
+
+test('retryable closed run reopens on same-run lifecycle start', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'hello', timestamp: 1, metadata: {} },
+    { id: 'msg-2', type: 'assistant', content: 'interim', timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+
+  adapter.rememberSessionKey(session.id, sessionKey);
+  adapter.ensureActiveTurn(session.id, sessionKey, 'retry-run');
+  const turn = adapter.activeTurns.get(session.id);
+  expect(turn).toBeTruthy();
+  if (turn) {
+    turn.allowRecentlyClosedRunRetryReopenOnCleanup = true;
+  }
+  session.status = 'completed';
+  adapter.cleanupSessionTurn(session.id);
+
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    seq: 2,
+    payload: {
+      runId: 'retry-run',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    },
+  });
+
+  expect(session.status).toBe('running');
+  expect(adapter.activeTurns.has(session.id)).toBe(true);
+  expect(adapter.sessionIdByRunId.get('retry-run')).toBe(session.id);
+
+  adapter.handleGatewayEvent({
+    event: 'agent',
+    seq: 3,
+    payload: {
+      runId: 'retry-run',
+      sessionKey,
+      stream: 'assistant',
+      data: { text: 'final answer after retry' },
+    },
+  });
+
+  expect(session.messages.some((message) => (
+    message.type === 'assistant'
+    && message.content === 'final answer after retry'
+  ))).toBe(true);
 });
 
 test('chat final completes after the retry grace window', async () => {
@@ -1482,10 +1643,14 @@ test('compaction stream shows context maintenance state while keeping the sessio
   ]);
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const messageSpy = vi.fn();
+  const messageUpdateSpy = vi.fn();
   const maintenanceSpy = vi.fn();
   const statusSpy = vi.fn();
 
   session.status = 'running';
+  adapter.on('message', messageSpy);
+  adapter.on('messageUpdate', messageUpdateSpy);
   adapter.on('contextMaintenance', maintenanceSpy);
   adapter.on('sessionStatus', statusSpy);
   adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction'));
@@ -1501,6 +1666,12 @@ test('compaction stream shows context maintenance state while keeping the sessio
   expect(statusSpy).toHaveBeenCalledWith(session.id, 'running');
   expect(maintenanceSpy).toHaveBeenCalledWith(session.id, true);
   expect(adapter.activeTurns.get(session.id)?.hasContextCompactionEvent).toBe(true);
+  const compactionMessages = session.messages.filter(
+    (message) => message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction,
+  );
+  expect(compactionMessages).toHaveLength(1);
+  expect(compactionMessages[0].metadata?.status).toBe(ContextCompactionStatus.Running);
+  expect(messageSpy).toHaveBeenCalledWith(session.id, compactionMessages[0]);
 
   adapter.handleAgentEvent({
     runId: 'run-compaction',
@@ -1511,9 +1682,72 @@ test('compaction stream shows context maintenance state while keeping the sessio
 
   expect(session.status).toBe('running');
   expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, true);
+  expect(session.messages.filter(
+    (message) => message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction,
+  )).toHaveLength(1);
+  expect(compactionMessages[0].metadata?.status).toBe(ContextCompactionStatus.Retrying);
+  expect(messageUpdateSpy).toHaveBeenCalledWith(
+    session.id,
+    compactionMessages[0].id,
+    expect.any(String),
+    expect.objectContaining({
+      kind: CoworkSystemMessageKind.ContextCompaction,
+      status: ContextCompactionStatus.Retrying,
+    }),
+  );
   expect(adapter.activeTurns.get(session.id)?.hasContextCompactionEvent).toBe(false);
   expect(adapter.activeTurns.get(session.id)?.pendingRecoverableFollowup).toBe(true);
   expect(adapter.activeTurns.has(session.id)).toBe(true);
+});
+
+test('compaction stream reuses active structured message for duplicate start events', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+
+  session.status = 'running';
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction'));
+
+  adapter.handleAgentEvent({
+    runId: 'run-compaction',
+    sessionKey,
+    stream: 'compaction',
+    data: { phase: 'start' },
+  }, 1);
+  adapter.handleAgentEvent({
+    runId: 'run-compaction',
+    sessionKey,
+    stream: 'compaction',
+    data: { phase: 'start' },
+  }, 2);
+
+  expect(session.messages.filter(
+    (message) => message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction,
+  )).toHaveLength(1);
+});
+
+test('compaction end without a structured start message does not append a late message', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+
+  session.status = 'running';
+  adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction'));
+
+  adapter.handleAgentEvent({
+    runId: 'run-compaction',
+    sessionKey,
+    stream: 'compaction',
+    data: { phase: 'end', completed: true, willRetry: false },
+  }, 1);
+
+  expect(session.messages.filter(
+    (message) => message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction,
+  )).toHaveLength(0);
 });
 
 test('empty tool final waits for compaction retry and accepts same-run continuation', async () => {
@@ -1608,6 +1842,117 @@ test('empty tool final waits for compaction retry and accepts same-run continuat
     await vi.advanceTimersByTimeAsync(800);
 
     expect(completeSpy).toHaveBeenCalledWith(session.id, 'run-retry');
+    expect(session.status).toBe('completed');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('empty final with local tool messages waits when history only has interim assistant text', async () => {
+  vi.useFakeTimers();
+  try {
+    const interimAnswer = '分析大致完成了，让我再确认一下 openclaw 日志有没有更多细节。';
+    const finalAnswer = '最终结论：OpenClaw 在压缩后继续 retry，客户端不能提前关闭 run。';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'analyze these logs', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'tool_use', content: 'Using grep', timestamp: 2, metadata: { toolUseId: 'call-1' } },
+      { id: 'msg-3', type: 'tool_result', content: '80 lines of output', timestamp: 3, metadata: { toolUseId: 'call-1' } },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const completeSpy = vi.fn();
+    const maintenanceSpy = vi.fn();
+    let historyAnswer = interimAnswer;
+
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async (method: string) => {
+        if (method !== 'chat.history') return {};
+        return {
+          messages: [
+            { role: 'user', content: 'analyze these logs' },
+            {
+              role: 'assistant',
+              content: [
+                { type: 'toolCall', id: 'call-1', name: 'exec', arguments: { command: 'grep restart gateway.log' } },
+              ],
+            },
+            { role: 'toolResult', toolCallId: 'call-1', content: '80 lines of output' },
+            { role: 'assistant', content: historyAnswer },
+          ],
+        };
+      },
+    };
+
+    session.status = 'running';
+    adapter.on('complete', completeSpy);
+    adapter.on('contextMaintenance', maintenanceSpy);
+    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-overflow'));
+    adapter.sessionIdByRunId.set('run-overflow', session.id);
+    adapter.latestTurnTokenBySession.set(session.id, 1);
+    adapter.rememberSessionKey(session.id, sessionKey);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-overflow',
+      sessionKey,
+    }, 1);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(completeSpy).not.toHaveBeenCalled();
+    expect(session.status).toBe('running');
+    expect(maintenanceSpy).toHaveBeenCalledWith(session.id, true);
+    expect(session.messages.some((message) => (
+      message.type === 'assistant'
+      && message.content === interimAnswer
+    ))).toBe(true);
+
+    adapter.handleAgentEvent({
+      runId: 'run-overflow',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    }, 2);
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(completeSpy).not.toHaveBeenCalled();
+    expect(session.status).toBe('running');
+
+    adapter.handleAgentEvent({
+      runId: 'run-overflow',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    }, 3);
+    historyAnswer = finalAnswer;
+    adapter.processAgentAssistantText({
+      runId: 'run-overflow',
+      sessionKey,
+      stream: 'assistant',
+      data: { text: finalAnswer },
+    });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, false);
+    expect(session.messages.some((message) => (
+      message.type === 'assistant'
+      && message.content === finalAnswer
+    ))).toBe(true);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-overflow',
+      sessionKey,
+      message: { role: 'assistant', content: finalAnswer },
+    }, 4);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(completeSpy).toHaveBeenCalledWith(session.id, 'run-overflow');
     expect(session.status).toBe('completed');
   } finally {
     vi.useRealTimers();
