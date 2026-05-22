@@ -214,6 +214,33 @@ test('updateToolUseMediaStatus preserves the highest media poll count', () => {
   });
 });
 
+test('updateToolUseMediaStatus drops single media poll counts', () => {
+  const state = coworkReducer(undefined, setCurrentSession(makeSession({
+    messages: [{
+      id: 'tool-1',
+      type: 'tool_use',
+      content: 'Using tool: lobsterai_video_generate',
+      timestamp: 1,
+      metadata: {
+        toolName: 'lobsterai_video_generate',
+        toolUseId: 'call-1',
+        toolInput: { action: 'status', taskId: 'task-1' },
+      },
+    }],
+    totalMessages: 1,
+  })));
+
+  const nextState = coworkReducer(state, updateToolUseMediaStatus({
+    sessionId: 'session-1',
+    toolCallId: 'call-1',
+    details: { taskId: 'task-1', pollCount: 1 },
+  }));
+
+  expect(nextState.currentSession?.messages[0].metadata?.mediaStatusDetails).toEqual({
+    taskId: 'task-1',
+  });
+});
+
 test('updateMessageContent preserves the highest media tool result poll count', () => {
   const state = coworkReducer(undefined, setCurrentSession(makeSession({
     messages: [{
@@ -242,6 +269,36 @@ test('updateMessageContent preserves the highest media tool result poll count', 
   expect(staleCountState.currentSession?.messages[0].metadata?.toolResultDetails).toMatchObject({
     taskId: 'task-1',
     pollCount: 12,
+    status: 'processing',
+  });
+});
+
+test('updateMessageContent drops single media tool result poll counts', () => {
+  const state = coworkReducer(undefined, setCurrentSession(makeSession({
+    messages: [{
+      id: 'result-1',
+      type: 'tool_result',
+      content: 'Task ID: task-1\nStatus: processing',
+      timestamp: 1,
+      metadata: {
+        toolUseId: 'call-1',
+      },
+    }],
+    totalMessages: 1,
+  })));
+
+  const nextState = coworkReducer(state, updateMessageContent({
+    sessionId: 'session-1',
+    messageId: 'result-1',
+    content: 'Task ID: task-1\nStatus: processing',
+    metadata: {
+      toolUseId: 'call-1',
+      toolResultDetails: { taskId: 'task-1', pollCount: 1, status: 'processing' },
+    },
+  }));
+
+  expect(nextState.currentSession?.messages[0].metadata?.toolResultDetails).toEqual({
+    taskId: 'task-1',
     status: 'processing',
   });
 });

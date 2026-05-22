@@ -2,6 +2,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   DocumentArrowDownIcon,
+  FolderIcon,
   PhotoIcon,
 } from '@heroicons/react/24/outline';
 import Lottie from 'lottie-react';
@@ -433,9 +434,12 @@ const truncatePreview = (value: string, maxLength = 120): string =>
 
 const MEDIA_TOKEN_DISPLAY_RE = /\n?MEDIA(?::\s*`?[^`\n]+?`?)?\s*$/gim;
 const MEDIA_TOKEN_MARKER_RE = /(^|\n)\s*MEDIA(?::\s*`?[^`\n]+?`?)?\s*$/im;
+const PARTIAL_MEDIA_TOKEN_MARKER_RE = /(^|\n)\s*(?:M|ME|MED|MEDI|MEDIA)(?::\s*`?[^`\n]+?`?)?\s*$/im;
 const MEDIA_FILE_LINK_DISPLAY_RE = /\[([^\]]+)\]\((file:\/\/[^)]*\.(?:png|jpe?g|gif|webp|bmp|avif|mp4|webm|mov)(?:\?[^)]*)?)\)/gi;
+const LOCAL_VIDEO_PATH_DISPLAY_RE = /(?:^|[\s"'`(：:])((?:\/|[A-Za-z]:\/)[^\n"'`()\[\]]+\.(?:mp4|webm|mov))(?:[\s"'`)]|$)/gi;
 const SAVED_GENERATED_MEDIA_RE = /^Saved generated (?:video|image)s?:/i;
 const GENERATED_MEDIA_SUCCEEDED_RE = /^(?:Video|Image) generation succeeded\./i;
+const GENERATED_VIDEO_TEXT_RE = /(?:视频(?:已生成|生成完成)|video\s+(?:generated|generation\s+succeeded|generation\s+complete))/i;
 
 const stripMediaDisplayTokens = (value: string): string =>
   value.replace(MEDIA_TOKEN_DISPLAY_RE, '').trimEnd();
@@ -474,6 +478,63 @@ const stripMediaFileLinksForDisplay = (value: string): string =>
 
 const getAssistantMessageDisplayText = (content: string): string =>
   stripMediaDisplayTokens(stripMediaFileLinksForDisplay(content));
+
+const extractLocalVideoPathsFromText = (content: string): string[] => {
+  const paths: string[] = [];
+  const fileLinkRe = new RegExp(MEDIA_FILE_LINK_DISPLAY_RE.source, 'gi');
+  let fileLinkMatch: RegExpExecArray | null;
+  while ((fileLinkMatch = fileLinkRe.exec(content)) !== null) {
+    const url = fileLinkMatch[2];
+    if (/\.(?:mp4|webm|mov)(?:\?[^)]*)?$/i.test(url)) {
+      paths.push(getDisplayPathFromFileUrl(url));
+    }
+  }
+
+  const barePathRe = new RegExp(LOCAL_VIDEO_PATH_DISPLAY_RE.source, 'gi');
+  let barePathMatch: RegExpExecArray | null;
+  while ((barePathMatch = barePathRe.exec(content)) !== null) {
+    paths.push(getDisplayPathFromFileUrl(barePathMatch[1]));
+  }
+
+  return [...new Set(paths.filter(Boolean))];
+};
+
+const getVideoPathArtifacts = (artifacts: Artifact[] | undefined): Artifact[] => {
+  if (!artifacts?.length) return [];
+  const result: Artifact[] = [];
+  const seen = new Set<string>();
+  for (const artifact of artifacts) {
+    if (artifact.type !== 'video' || !artifact.filePath) continue;
+    const key = normalizeFilePathForDedup(artifact.filePath);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(artifact);
+  }
+  return result;
+};
+
+const isDuplicateGeneratedVideoAssistantMessage = (
+  message: CoworkMessage,
+  videoArtifacts: Artifact[],
+): boolean => {
+  if (videoArtifacts.length === 0) return false;
+  const rawContent = message.content || '';
+  const textPaths = extractLocalVideoPathsFromText(rawContent);
+  if (textPaths.length === 0) return false;
+
+  const artifactPaths = new Set(
+    videoArtifacts
+      .map(artifact => artifact.filePath)
+      .filter((filePath): filePath is string => Boolean(filePath))
+      .map(filePath => normalizeFilePathForDedup(filePath)),
+  );
+  const referencesGeneratedVideo = textPaths.some(filePath => artifactPaths.has(normalizeFilePathForDedup(filePath)));
+  if (!referencesGeneratedVideo) return false;
+
+  return GENERATED_VIDEO_TEXT_RE.test(rawContent)
+    || MEDIA_TOKEN_MARKER_RE.test(rawContent)
+    || PARTIAL_MEDIA_TOKEN_MARKER_RE.test(rawContent);
+};
 
 const getAssistantMediaCompletionKey = (message: CoworkMessage): string | null => {
   const rawContent = message.content || '';
@@ -1022,6 +1083,10 @@ const readMediaPollCount = (value: unknown): number | undefined => (
     : undefined
 );
 
+const getDisplayMediaPollCount = (value: number | undefined): number | undefined => (
+  value != null && value > 1 ? value : undefined
+);
+
 const getMediaStatusDetailPollCount = (group: ToolGroupItem): number | undefined => {
   const details = getMediaStatusDetails(group);
   return readMediaPollCount(details?.pollCount);
@@ -1056,22 +1121,92 @@ const isMediaStatusPollRunning = (group: ToolGroupItem): boolean => {
   return false;
 };
 
-const parseMediaStreamingInfo = (group: ToolGroupItem): { taskId?: string; upstreamTaskId?: string; pollCount?: number } => {
+type MediaStreamingInfo = {
+  taskId?: string;
+  upstreamTaskId?: string;
+  pollCount?: number;
+};
+
+const getMediaTaskIdKeys = (info: Pick<MediaStreamingInfo, 'taskId' | 'upstreamTaskId'>): string[] => {
+  const keys = [info.taskId, info.upstreamTaskId]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map(value => value.trim());
+  return [...new Set(keys)];
+};
+
+const setRetainedMediaPollCount = (
+  counts: Map<string, number>,
+  info: Pick<MediaStreamingInfo, 'taskId' | 'upstreamTaskId'>,
+  pollCount: number | undefined,
+): void => {
+  const displayPollCount = getDisplayMediaPollCount(pollCount);
+  if (displayPollCount == null) return;
+
+  for (const key of getMediaTaskIdKeys(info)) {
+    counts.set(key, Math.max(counts.get(key) ?? 0, displayPollCount));
+  }
+};
+
+const getRetainedMediaPollCount = (
+  info: Pick<MediaStreamingInfo, 'taskId' | 'upstreamTaskId'>,
+  retainedCounts?: Map<string, number>,
+): number | undefined => {
+  if (!retainedCounts) return undefined;
+  let pollCount: number | undefined;
+  for (const key of getMediaTaskIdKeys(info)) {
+    const retained = retainedCounts.get(key);
+    if (retained != null) {
+      pollCount = Math.max(pollCount ?? 0, retained);
+    }
+  }
+  return getDisplayMediaPollCount(pollCount);
+};
+
+const collectMediaPollCounts = (items: ConsolidatedItem[]): Map<string, number> => {
+  const counts = new Map<string, number>();
+
+  for (const item of items) {
+    if (item.type === 'media_polling_group') {
+      setRetainedMediaPollCount(
+        counts,
+        { taskId: item.group.taskId, upstreamTaskId: item.group.upstreamTaskId },
+        item.group.pollCount,
+      );
+      continue;
+    }
+
+    if (item.type !== 'tool_group') continue;
+    const info = parseMediaStreamingInfo(item.group);
+    setRetainedMediaPollCount(counts, info, info.pollCount);
+  }
+
+  return counts;
+};
+
+const parseMediaStreamingInfo = (group: ToolGroupItem): MediaStreamingInfo => {
   const result = group.toolResult;
   const input = group.toolUse.metadata?.toolInput as Record<string, unknown> | undefined;
   const inputTaskId = typeof input?.taskId === 'string' && input.taskId.trim()
     ? input.taskId.trim()
     : undefined;
-  const statusFallbackPollCount = input?.action === 'status' ? (group.mediaPollOrdinal ?? 1) : undefined;
+  const statusFallbackPollCount = input?.action === 'status' ? group.mediaPollOrdinal : undefined;
   const details = getMediaStatusDetails(group);
+  const pollCount = getDisplayMediaPollCount(getMediaPollCount(group) ?? statusFallbackPollCount);
   if (details?.taskId || inputTaskId) {
     return {
       taskId: details?.taskId ? String(details.taskId) : inputTaskId,
       upstreamTaskId: details?.upstreamTaskId ? String(details.upstreamTaskId) : undefined,
-      pollCount: getMediaPollCount(group) ?? statusFallbackPollCount,
+      ...(pollCount != null ? { pollCount } : {}),
     };
   }
-  if (!result) return inputTaskId ? { taskId: inputTaskId, pollCount: statusFallbackPollCount } : {};
+  if (!result) {
+    return inputTaskId
+      ? {
+          taskId: inputTaskId,
+          ...(pollCount != null ? { pollCount } : {}),
+        }
+      : {};
+  }
   return {};
 };
 
@@ -1267,10 +1402,12 @@ const ToolCallGroup: React.FC<{
   group: ToolGroupItem;
   isLastInSequence?: boolean;
   mapDisplayText?: (value: string) => string;
+  retainedMediaPollCounts?: Map<string, number>;
 }> = ({
   group,
   isLastInSequence = true,
   mapDisplayText,
+  retainedMediaPollCounts,
 }) => {
   const { toolUse, toolResult } = group;
   const shouldExpandByDefault = isMediaStatusPoll(group);
@@ -1362,6 +1499,7 @@ const ToolCallGroup: React.FC<{
       </button>
       {isMediaGenerateRunning(group) && isSessionStreaming && (() => {
         const streamingInfo = parseMediaStreamingInfo(group);
+        const pollCount = streamingInfo.pollCount ?? getRetainedMediaPollCount(streamingInfo, retainedMediaPollCounts);
         return (
           <div className="ml-4 mt-2 flex items-center gap-2">
             <Lottie
@@ -1376,9 +1514,9 @@ const ToolCallGroup: React.FC<{
             {streamingInfo.taskId && (
               <span className="text-xs text-muted break-all">taskid:{streamingInfo.upstreamTaskId || streamingInfo.taskId}</span>
             )}
-            {streamingInfo.pollCount != null && (
+            {pollCount != null && (
               <span className="text-xs text-muted">
-                {i18nService.t('mediaStatusQueryCount').replace('{count}', String(streamingInfo.pollCount))}
+                {i18nService.t('mediaStatusQueryCount').replace('{count}', String(pollCount))}
               </span>
             )}
           </div>
@@ -1386,6 +1524,7 @@ const ToolCallGroup: React.FC<{
       })()}
       {isMediaStatusPollRunning(group) && isSessionStreaming && (() => {
         const streamingInfo = parseMediaStreamingInfo(group);
+        const pollCount = streamingInfo.pollCount ?? getRetainedMediaPollCount(streamingInfo, retainedMediaPollCounts);
         const displayTaskId = streamingInfo.upstreamTaskId || streamingInfo.taskId;
         const toolName = group.toolUse.metadata?.toolName || '';
         const isVideo = normalizeToolName(toolName) === 'lobsteraivideogenerate';
@@ -1403,9 +1542,9 @@ const ToolCallGroup: React.FC<{
             {displayTaskId && (
               <span className="text-xs text-muted break-all">taskid:{displayTaskId}</span>
             )}
-            {streamingInfo.pollCount != null && (
+            {pollCount != null && (
               <span className="text-xs text-muted">
-                {i18nService.t('mediaStatusQueryCount').replace('{count}', String(streamingInfo.pollCount))}
+                {i18nService.t('mediaStatusQueryCount').replace('{count}', String(pollCount))}
               </span>
             )}
           </div>
@@ -1761,6 +1900,50 @@ const MediaImageInline: React.FC<{ artifacts: Artifact[] }> = ({ artifacts }) =>
   );
 };
 
+const VideoArtifactPathList: React.FC<{ artifacts: Artifact[] }> = ({ artifacts }) => {
+  if (artifacts.length === 0) return null;
+
+  const handleShowInFolder = async (filePath: string) => {
+    try {
+      const result = await window.electron.shell.showItemInFolder(filePath);
+      if (!result?.success) {
+        window.dispatchEvent(new CustomEvent('app:showToast', {
+          detail: result?.error || i18nService.t('showInFolderFailed'),
+        }));
+      }
+    } catch (error) {
+      console.error('[CoworkSessionDetail] failed to show generated video in folder:', error);
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('showInFolderFailed'),
+      }));
+    }
+  };
+
+  return (
+    <div className="space-y-1">
+      {artifacts.map((artifact) => {
+        if (!artifact.filePath) return null;
+        const filePath = getDisplayPathFromFileUrl(artifact.filePath);
+        return (
+          <div key={`video-path-${artifact.id}`} className="flex min-w-0 items-start gap-1.5 text-foreground">
+            <span className="flex-shrink-0 font-medium">{i18nService.t('mediaVideoGeneratedPath')}</span>
+            <span className="min-w-0 break-words [overflow-wrap:anywhere]">{filePath}</span>
+            <button
+              type="button"
+              className="mt-0.5 inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-secondary hover:bg-surface-hover hover:text-primary transition-colors"
+              title={i18nService.t('showInFolder')}
+              aria-label={i18nService.t('showInFolder')}
+              onClick={() => void handleShowInFolder(filePath)}
+            >
+              <FolderIcon className="h-4 w-4" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const AssistantMessageItem: React.FC<{
   message: CoworkMessage;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
@@ -1947,14 +2130,36 @@ export const AssistantTurnBlock: React.FC<{
     () => consolidateMediaPolling(visibleAssistantItems),
     [visibleAssistantItems],
   );
+  const videoPathArtifacts = useMemo(
+    () => getVideoPathArtifacts(artifacts),
+    [artifacts],
+  );
+  const retainedMediaPollCountsRef = useRef<Map<string, number>>(new Map());
+  const currentMediaPollCounts = useMemo(
+    () => collectMediaPollCounts(consolidatedItems),
+    [consolidatedItems],
+  );
+  const retainedMediaPollCounts = useMemo(() => {
+    const next = new Map(retainedMediaPollCountsRef.current);
+    for (const [key, pollCount] of currentMediaPollCounts) {
+      next.set(key, Math.max(next.get(key) ?? 0, pollCount));
+    }
+    return next;
+  }, [currentMediaPollCounts]);
+
+  useEffect(() => {
+    retainedMediaPollCountsRef.current = retainedMediaPollCounts;
+  }, [retainedMediaPollCounts]);
 
   const renderSystemMessage = (message: CoworkMessage) => {
     const isError = !hasText(message.content) && typeof message.metadata?.error === 'string';
     const rawContent = hasText(message.content)
       ? message.content
       : (typeof message.metadata?.error === 'string' ? message.metadata.error : '');
-    const normalizedContent = getMediaCompletionDisplayText(message, rawContent)
-      ?? getScheduledReminderDisplayText(rawContent)
+    if (getMediaCompletionDisplayText(message, rawContent)) {
+      return null;
+    }
+    const normalizedContent = getScheduledReminderDisplayText(rawContent)
       ?? rawContent;
     const content = mapDisplayText ? mapDisplayText(normalizedContent) : normalizedContent;
     if (!content.trim()) return null;
@@ -2035,10 +2240,17 @@ export const AssistantTurnBlock: React.FC<{
               if (item.type === 'media_polling_group') {
                 const nextItem = consolidatedItems[index + 1];
                 const isLastInSequence = !nextItem || (nextItem.type !== 'tool_group' && nextItem.type !== 'media_polling_group');
+                const retainedPollCount = getRetainedMediaPollCount(
+                  { taskId: item.group.taskId, upstreamTaskId: item.group.upstreamTaskId },
+                  retainedMediaPollCounts,
+                );
                 return (
                   <MediaPollingIndicator
                     key={`media-poll-${item.group.taskId}-${item.group.polls[0].toolUse.id}`}
-                    group={item.group}
+                    group={{
+                      ...item.group,
+                      pollCount: Math.max(item.group.pollCount, retainedPollCount ?? 0),
+                    }}
                     isLastInSequence={isLastInSequence}
                   />
                 );
@@ -2053,6 +2265,10 @@ export const AssistantTurnBlock: React.FC<{
                       mapDisplayText={mapDisplayText}
                     />
                   );
+                }
+
+                if (isDuplicateGeneratedVideoAssistantMessage(item.message, videoPathArtifacts)) {
+                  return null;
                 }
 
                 // When the AI outputs bare "MEDIA" text, render turn image artifacts inline
@@ -2092,6 +2308,7 @@ export const AssistantTurnBlock: React.FC<{
                     group={item.group}
                     isLastInSequence={isLastInSequence}
                     mapDisplayText={mapDisplayText}
+                    retainedMediaPollCounts={retainedMediaPollCounts}
                   />
                 );
               }
@@ -2116,10 +2333,13 @@ export const AssistantTurnBlock: React.FC<{
             })}
             {showTypingIndicator && <TypingDots />}
             {artifacts && artifacts.length > 0 && (
-              <div className="flex flex-wrap gap-2 pt-1">
-                {artifacts.map(artifact => (
-                  <ArtifactPreviewCard key={artifact.id} artifact={artifact} />
-                ))}
+              <div className="space-y-2 pt-1">
+                <VideoArtifactPathList artifacts={videoPathArtifacts} />
+                <div className="flex flex-wrap gap-2">
+                  {artifacts.map(artifact => (
+                    <ArtifactPreviewCard key={artifact.id} artifact={artifact} />
+                  ))}
+                </div>
               </div>
             )}
           </div>

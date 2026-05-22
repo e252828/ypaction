@@ -114,7 +114,7 @@ const MediaGenerationActionName = {
 } as const;
 
 const readMediaPollCount = (value: unknown): number | undefined => (
-  typeof value === 'number' && Number.isFinite(value) && value > 0
+  typeof value === 'number' && Number.isFinite(value) && value > 1
     ? Math.floor(value)
     : undefined
 );
@@ -130,11 +130,15 @@ const mergeMediaDetails = (
     : nextPollCount == null
       ? existingPollCount
       : Math.max(existingPollCount, nextPollCount);
-  return {
+  const merged = {
     ...(existingDetails ?? {}),
     ...nextDetails,
-    ...(pollCount != null ? { pollCount } : {}),
   };
+  delete merged.pollCount;
+  if (pollCount != null) {
+    merged.pollCount = pollCount;
+  }
+  return merged;
 };
 
 const isMediaStatusToolUseMessage = (

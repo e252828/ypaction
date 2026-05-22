@@ -22,7 +22,7 @@ const MediaPollingIndicator: React.FC<{
 }> = ({ group, isLastInSequence = true }) => {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const pollCount = group.pollCount;
+  const pollCount = group.pollCount > 1 ? group.pollCount : undefined;
   const collapsedPollCount = group.polls.length;
   const isVideo = group.toolName.includes('video');
 
@@ -35,7 +35,9 @@ const MediaPollingIndicator: React.FC<{
       ? i18nService.t('mediaGeneratingVideo')
       : i18nService.t('mediaGeneratingImage');
 
-  const statusQueryText = i18nService.t('mediaStatusQueryCount').replace('{count}', String(pollCount));
+  const statusQueryText = pollCount == null
+    ? ''
+    : i18nService.t('mediaStatusQueryCount').replace('{count}', String(pollCount));
 
   useEffect(() => {
     if (!cancelError) return;
@@ -80,7 +82,9 @@ const MediaPollingIndicator: React.FC<{
         <div className="flex-1 min-w-0 py-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-secondary">{label}</span>
-            <span className="text-xs text-muted break-all">taskid:{group.upstreamTaskId || group.taskId}  {statusQueryText}</span>
+            <span className="text-xs text-muted break-all">
+              taskid:{group.upstreamTaskId || group.taskId}{statusQueryText ? `  ${statusQueryText}` : ''}
+            </span>
             {canCancel && (
               <button
                 className="px-2 py-0.5 text-xs rounded border border-red-300 text-red-500 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50"

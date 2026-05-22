@@ -2809,7 +2809,7 @@ if (!gotTheLock) {
           taskId: String(task.taskId),
           ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
           status,
-          pollCount,
+          ...(pollCount > 1 ? { pollCount } : {}),
           model: task.model as string,
           mediaType: statusMediaType,
           ...(detailsAssets.length > 0 ? { assets: detailsAssets } : {}),

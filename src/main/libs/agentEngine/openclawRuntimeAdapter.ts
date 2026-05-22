@@ -965,13 +965,17 @@ const resolveMediaStatusToolDetails = (
   const upstreamTaskId = typeof details?.upstreamTaskId === 'string'
     ? details.upstreamTaskId
     : textTaskId;
+  const nextDetails = {
+    ...(details ?? {}),
+  };
+  delete nextDetails.pollCount;
 
   return {
-    ...(details ?? {}),
+    ...nextDetails,
     taskId: typeof details?.taskId === 'string' ? details.taskId : mediaArgs.taskId,
     ...(upstreamTaskId ? { upstreamTaskId } : {}),
     ...(status ? { status } : {}),
-    ...(resolvedPollCount != null ? { pollCount: resolvedPollCount } : {}),
+    ...(resolvedPollCount != null && resolvedPollCount > 1 ? { pollCount: resolvedPollCount } : {}),
     isMediaStatusPolling: true,
     mediaType: mediaArgs.mediaType,
   };
