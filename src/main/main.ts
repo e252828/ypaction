@@ -1,5 +1,4 @@
-import type { WebContents } from 'electron';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, protocol, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, protocol, session, shell, systemPreferences, type WebContents } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -87,8 +86,7 @@ import {
   OpenClawConfigImpactReason,
   removeImpactDecisionReasons,
 } from './libs/openclawConfigImpact';
-import type { ResolvedMcpServer } from './libs/openclawConfigSync';
-import { buildProviderSelection, OpenClawConfigSync } from './libs/openclawConfigSync';
+import { buildProviderSelection, OpenClawConfigSync, type ResolvedMcpServer } from './libs/openclawConfigSync';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './libs/openclawEngineManager';
 import {
   addMemoryEntry,
@@ -117,8 +115,7 @@ import {
   setSystemProxyEnabled,
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
-import type { McpServerFormData } from './mcpStore';
-import { McpStore } from './mcpStore';
+import { type McpServerFormData, McpStore } from './mcpStore';
 import { OpenClawSessionIpc } from './openclawSession/constants';
 import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 import { loadOpenClawSessionPolicyConfig, saveOpenClawSessionPolicyConfig } from './openclawSessionPolicy/store';
