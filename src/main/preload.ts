@@ -6,10 +6,9 @@ import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
-import { DialogIpc } from '../shared/dialog/constants';
-import type { ListLocalWebServicesOptions, LocalWebService } from '../shared/localWebServices/constants';
-import { LocalWebServicesIpc } from '../shared/localWebServices/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
+import { DialogIpc } from '../shared/dialog/constants';
+import { type ListLocalWebServicesOptions, type LocalWebService, LocalWebServicesIpc } from '../shared/localWebServices/constants';
 import type { Platform } from '../shared/platform';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -485,6 +484,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   plugins: {
     list: () => ipcRenderer.invoke('plugins:list'),
+    detect: () => ipcRenderer.invoke('plugins:detect'),
+    sync: () => ipcRenderer.invoke('plugins:sync'),
     install: (params: {
       source: 'npm' | 'clawhub' | 'git' | 'local';
       spec: string;
