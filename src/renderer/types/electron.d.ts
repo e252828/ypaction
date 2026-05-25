@@ -331,6 +331,11 @@ interface IElectronAPI {
       config: Record<string, string>,
     ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
     fetchMarketplace: () => Promise<{ success: boolean; data?: string; error?: string }>;
+    detectFromOpenClaw: () => Promise<{
+      skills: Array<{ name: string; description: string; skillKey: string; baseDir: string }>;
+      error?: string;
+    }>;
+    syncFromOpenClaw: () => Promise<{ synced: string[]; error?: string }>;
     onChanged: (callback: () => void) => () => void;
   };
   mcp: {

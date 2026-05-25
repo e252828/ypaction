@@ -3898,6 +3898,42 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('skills:detectFromOpenClaw', async () => {
+    try {
+      if (!openClawRuntimeAdapter) {
+        return { skills: [], error: 'OpenClaw runtime not available' };
+      }
+      await openClawRuntimeAdapter.connectGatewayIfNeeded();
+      const client = openClawRuntimeAdapter.getGatewayClient();
+      if (!client) {
+        return { skills: [], error: 'Gateway client not connected' };
+      }
+      const report = await client.request<{ skills: Array<Record<string, unknown>> }>('skills.status', {}, { timeoutMs: 10_000 });
+      const sm = getSkillManager();
+      return sm.detectSkillsFromOpenClaw(report as any);
+    } catch (error) {
+      return { skills: [], error: error instanceof Error ? error.message : 'Detection failed' };
+    }
+  });
+
+  ipcMain.handle('skills:syncFromOpenClaw', async () => {
+    try {
+      if (!openClawRuntimeAdapter) {
+        return { synced: [], error: 'OpenClaw runtime not available' };
+      }
+      await openClawRuntimeAdapter.connectGatewayIfNeeded();
+      const client = openClawRuntimeAdapter.getGatewayClient();
+      if (!client) {
+        return { synced: [], error: 'Gateway client not connected' };
+      }
+      const report = await client.request<{ skills: Array<Record<string, unknown>> }>('skills.status', {}, { timeoutMs: 10_000 });
+      const sm = getSkillManager();
+      return sm.syncSkillsFromOpenClaw(report as any);
+    } catch (error) {
+      return { synced: [], error: error instanceof Error ? error.message : 'Sync failed' };
+    }
+  });
+
   ipcMain.handle('openclaw:engine:getStatus', async () => {
     try {
       const manager = getOpenClawEngineManager();

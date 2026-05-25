@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('electron', {
     testEmailConnectivity: (skillId: string, config: Record<string, string>) =>
       ipcRenderer.invoke('skills:testEmailConnectivity', skillId, config),
     fetchMarketplace: () => ipcRenderer.invoke('skills:fetchMarketplace'),
+    detectFromOpenClaw: () => ipcRenderer.invoke('skills:detectFromOpenClaw'),
+    syncFromOpenClaw: () => ipcRenderer.invoke('skills:syncFromOpenClaw'),
     onChanged: (callback: () => void) => {
       const handler = () => callback();
       ipcRenderer.on('skills:changed', handler);

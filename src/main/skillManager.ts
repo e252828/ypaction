@@ -330,6 +330,16 @@ type SkillsConfig = {
   defaults: Record<string, SkillDefaultConfig>;
 };
 
+export interface OpenClawSkillStatusEntry {
+  name: string;
+  description: string;
+  source: string;
+  bundled: boolean;
+  filePath: string;
+  baseDir: string;
+  skillKey: string;
+}
+
 const SKILLS_DIR_NAME = 'SKILLs';
 const SKILL_FILE_NAME = 'SKILL.md';
 const SKILLS_CONFIG_FILE = 'skills.config.json';
@@ -1611,6 +1621,81 @@ export class SkillManager {
       skillEntries,
       '</available_skills>',
     ].join('\n');
+  }
+
+  detectSkillsFromOpenClaw(report: {
+    skills: Array<{
+      name: string;
+      description: string;
+      source: string;
+      bundled: boolean;
+      filePath: string;
+      baseDir: string;
+      skillKey: string;
+    }>;
+  }): { skills: Array<{ name: string; description: string; skillKey: string; baseDir: string }>; error?: string } {
+    try {
+      const existing = this.listSkills();
+      const existingIds = new Set(existing.map(s => s.id));
+      const skillsRoot = this.getSkillsRoot();
+
+      const newSkills = report.skills.filter(entry => {
+        if (entry.bundled) return false;
+        const normalizedBaseDir = path.resolve(entry.baseDir);
+        const normalizedRoot = path.resolve(skillsRoot);
+        if (normalizedBaseDir.startsWith(normalizedRoot)) return false;
+        const id = entry.skillKey || path.basename(entry.baseDir);
+        if (existingIds.has(id)) return false;
+        return true;
+      });
+
+      return {
+        skills: newSkills.map(s => ({
+          name: s.name,
+          description: s.description,
+          skillKey: s.skillKey || path.basename(s.baseDir),
+          baseDir: s.baseDir,
+        })),
+      };
+    } catch (error) {
+      return { skills: [], error: error instanceof Error ? error.message : 'Detection failed' };
+    }
+  }
+
+  syncSkillsFromOpenClaw(report: {
+    skills: Array<{
+      name: string;
+      description: string;
+      source: string;
+      bundled: boolean;
+      filePath: string;
+      baseDir: string;
+      skillKey: string;
+    }>;
+  }): { synced: string[]; error?: string } {
+    try {
+      const { skills } = this.detectSkillsFromOpenClaw(report);
+      if (skills.length === 0) return { synced: [] };
+
+      const root = this.ensureSkillsRoot();
+      const synced: string[] = [];
+
+      for (const entry of skills) {
+        const srcDir = path.resolve(entry.baseDir);
+        if (!fs.existsSync(srcDir)) continue;
+        const targetDir = path.join(root, entry.skillKey);
+        if (fs.existsSync(targetDir)) continue;
+        cpRecursiveSync(srcDir, targetDir);
+        synced.push(entry.skillKey);
+      }
+
+      if (synced.length > 0) {
+        this.notifySkillsChanged();
+      }
+      return { synced };
+    } catch (error) {
+      return { synced: [], error: error instanceof Error ? error.message : 'Sync failed' };
+    }
   }
 
   setSkillEnabled(id: string, enabled: boolean): SkillRecord[] {

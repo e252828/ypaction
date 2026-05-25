@@ -1178,6 +1178,18 @@ const translations: Record<LanguageType, Record<string, string>> = {
     clearAll: '全部清除',
     clearAllSkills: '清除所有已选技能',
 
+    // 技能同步 (OpenClaw)
+    syncSkillsFromOpenClaw: '从 OpenClaw 同步',
+    skillsSyncTitle: '发现新技能',
+    skillsSyncFound: '检测到 {count} 个可从 OpenClaw 同步的技能：',
+    skillsSyncNow: '立即同步',
+    skillsSyncSkip: '暂不同步',
+    skillsSyncLater: '如果现在不同步，后续可以在「添加」菜单中的「从 OpenClaw 同步」手动操作。',
+    skillsSyncNoneFound: '未发现新技能',
+    skillsSyncing: '正在同步技能...',
+    skillsSyncSuccess: '已成功同步技能',
+    skillsSyncFailed: '同步技能失败',
+
     // MCP 服务
     mcpServers: 'MCP',
     mcpDescription: '配置和管理 MCP（Model Context Protocol）服务器，为您的智能体扩展工具能力',
@@ -3366,6 +3378,18 @@ const translations: Record<LanguageType, Record<string, string>> = {
     clearSkill: 'Clear Skill',
     clearAll: 'Clear All',
     clearAllSkills: 'Clear all selected skills',
+
+    // Skill Sync (OpenClaw)
+    syncSkillsFromOpenClaw: 'Sync from OpenClaw',
+    skillsSyncTitle: 'New Skills Detected',
+    skillsSyncFound: 'Detected {count} skill(s) available to sync from OpenClaw:',
+    skillsSyncNow: 'Sync Now',
+    skillsSyncSkip: 'Not Now',
+    skillsSyncLater: 'You can always sync later from the "Add" menu under "Sync from OpenClaw".',
+    skillsSyncNoneFound: 'No new skills found',
+    skillsSyncing: 'Syncing skills...',
+    skillsSyncSuccess: 'Skills synced successfully',
+    skillsSyncFailed: 'Failed to sync skills',
 
     // MCP Servers
     mcpServers: 'MCP',
