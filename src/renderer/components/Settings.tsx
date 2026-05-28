@@ -37,7 +37,7 @@ import BrainIcon from './icons/BrainIcon';
 import PlugIcon from './icons/PlugIcon';
 import PlusCircleIcon from './icons/PlusCircleIcon';
 import IMSettings from './im/IMSettings';
-import PluginsSettings from './plugins/PluginsSettings';
+import PluginsSettings, { type PluginsSettingsHandle } from './plugins/PluginsSettings';
 import BrowserWebAccessSettings from './settings/BrowserWebAccessSettings';
 import {
   buildOpenAICompatibleChatCompletionsUrl,
@@ -500,6 +500,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
+
+  // Plugin settings dirty tracking
+  const pluginsDirtyRef = useRef(false);
+  const pluginsSettingsRef = useRef<PluginsSettingsHandle>(null);
+  const [showPluginsUnsavedConfirm, setShowPluginsUnsavedConfirm] = useState(false);
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<(() => void) | null>(null);
 
   // Add state for active provider
   const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
@@ -1923,6 +1929,16 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         throw new Error(i18nService.t('settingsSavedButOpenClawSyncFailed'));
       }
 
+      // Batch save plugin changes (toggles + configs) if any pending
+      if (activeTab === 'plugins' && pluginsSettingsRef.current) {
+        const pendingChanges = pluginsSettingsRef.current.getPendingChanges();
+        if (pendingChanges) {
+          await window.electron?.plugins.batchSave(pendingChanges);
+          pluginsSettingsRef.current.resetDirty();
+          pluginsDirtyRef.current = false;
+        }
+      }
+
       didSaveRef.current = true;
       onClose();
     } catch (error) {
@@ -1933,7 +1949,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   };
 
   // 标签页切换处理
-  const handleTabChange = (tab: TabType) => {
+  const doTabChange = (tab: TabType) => {
     if (tab !== 'model') {
       setIsAddingModel(false);
       setIsEditingModel(false);
@@ -1945,6 +1961,25 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     }
     setActiveTab(tab);
   };
+
+  const handleTabChange = (tab: TabType) => {
+    if (activeTab === 'plugins' && pluginsDirtyRef.current) {
+      setPendingLeaveAction(() => () => doTabChange(tab));
+      setShowPluginsUnsavedConfirm(true);
+      return;
+    }
+    doTabChange(tab);
+  };
+
+  // Guarded close: check plugin dirty state before closing
+  const guardedClose = useCallback(() => {
+    if (activeTab === 'plugins' && pluginsDirtyRef.current) {
+      setPendingLeaveAction(() => () => onClose());
+      setShowPluginsUnsavedConfirm(true);
+      return;
+    }
+    onClose();
+  }, [activeTab, onClose]);
 
   // Mapping from shortcut key to i18n label key for conflict messages
   const shortcutLabelMap: Record<string, string> = {
@@ -3213,7 +3248,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         return <IMSettings />;
 
       case 'plugins':
-        return <PluginsSettings />;
+        return (
+          <PluginsSettings
+            onDirtyChange={(dirty) => { pluginsDirtyRef.current = dirty; }}
+            handleRef={pluginsSettingsRef}
+          />
+        );
 
       case 'about':
         return (
@@ -3373,7 +3413,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={guardedClose}
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-3 sm:p-4"
       className="w-[calc(100vw-1.5rem)] max-w-[900px] min-w-0 sm:w-[calc(100vw-2rem)]"
     >
@@ -3410,7 +3450,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
           <div className="flex justify-between items-center gap-3 px-6 pt-5 pb-3 shrink-0">
             <h3 className="min-w-0 truncate text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <button
-              onClick={onClose}
+              onClick={guardedClose}
               className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
             >
               <XMarkIcon className="h-5 w-5" />
@@ -3449,7 +3489,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
             <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={guardedClose}
                 className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
               >
                 {i18nService.t('cancel')}
@@ -3541,6 +3581,45 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               </div>
             </div>
           )}
+
+      {/* Plugins unsaved changes confirmation dialog */}
+      {showPluginsUnsavedConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-sm rounded-2xl bg-background border border-border shadow-modal p-5">
+            <h4 className="text-sm font-semibold text-foreground mb-2">
+              {i18nService.t('pluginsUnsavedTitle')}
+            </h4>
+            <p className="text-sm text-secondary mb-4">
+              {i18nService.t('pluginsUnsavedMessage')}
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPluginsUnsavedConfirm(false);
+                  setPendingLeaveAction(null);
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              >
+                {i18nService.t('pluginsUnsavedStay')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPluginsUnsavedConfirm(false);
+                  pluginsDirtyRef.current = false;
+                  const action = pendingLeaveAction;
+                  setPendingLeaveAction(null);
+                  action?.();
+                }}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity"
+              >
+                {i18nService.t('pluginsUnsavedDiscard')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </Modal>
   );

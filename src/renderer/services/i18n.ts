@@ -1409,6 +1409,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsSyncNow: '立即同步',
     pluginsSyncSkip: '暂不同步',
     pluginsSyncLater: '如果现在不同步，后续可以在「安装插件」页面的 OpenClaw 分类下手动操作。',
+    pluginsUnsavedTitle: '未保存的更改',
+    pluginsUnsavedMessage: '插件设置的修改将丢失，确认离开吗？',
+    pluginsUnsavedStay: '继续编辑',
+    pluginsUnsavedDiscard: '放弃更改',
 
     // IM Bot
     imBot: 'IM 机器人',
@@ -3696,6 +3700,10 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsSyncNow: 'Sync Now',
     pluginsSyncSkip: 'Not Now',
     pluginsSyncLater: 'You can always sync later from the "Install Plugin" dialog under the OpenClaw tab.',
+    pluginsUnsavedTitle: 'Unsaved Changes',
+    pluginsUnsavedMessage: 'Plugin setting changes will be lost. Leave anyway?',
+    pluginsUnsavedStay: 'Keep Editing',
+    pluginsUnsavedDiscard: 'Discard Changes',
 
     // IM Bot
     imBot: 'IM Bot',

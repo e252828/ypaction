@@ -899,6 +899,10 @@ interface IElectronAPI {
       pluginId: string,
       config: Record<string, unknown>,
     ) => Promise<{ ok: boolean; error?: string }>;
+    batchSave: (changes: {
+      toggles?: Array<{ pluginId: string; enabled: boolean }>;
+      configs?: Array<{ pluginId: string; config: Record<string, unknown> }>;
+    }) => Promise<{ ok: boolean; error?: string }>;
     detect: () => Promise<{ plugins: string[]; error?: string }>;
     sync: () => Promise<{ synced: string[]; error?: string }>;
     onInstallLog: (callback: (line: string) => void) => () => void;

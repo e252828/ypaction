@@ -1,5 +1,5 @@
 import { ArrowPathIcon, Cog6ToothIcon,PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { useCallback, useEffect, useRef,useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef,useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import PluginConfigPage from './PluginConfigPage';
@@ -23,7 +23,22 @@ interface InstallForm {
   version: string;
 }
 
-export default function PluginsSettings() {
+export interface PluginPendingChanges {
+  toggles: Array<{ pluginId: string; enabled: boolean }>;
+  configs: Array<{ pluginId: string; config: Record<string, unknown> }>;
+}
+
+export interface PluginsSettingsHandle {
+  getPendingChanges: () => PluginPendingChanges | null;
+  resetDirty: () => void;
+}
+
+interface PluginsSettingsProps {
+  onDirtyChange?: (dirty: boolean) => void;
+  handleRef?: React.Ref<PluginsSettingsHandle>;
+}
+
+export default function PluginsSettings({ onDirtyChange, handleRef }: PluginsSettingsProps) {
   const [plugins, setPlugins] = useState<PluginListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -44,10 +59,81 @@ export default function PluginsSettings() {
     version: '',
   });
 
+  // --- Deferred save: track initial state and pending changes ---
+  const initialPluginsRef = useRef<Map<string, boolean>>(new Map());
+  const [pendingToggles, setPendingToggles] = useState<Map<string, boolean>>(new Map());
+  const [pendingConfigs, setPendingConfigs] = useState<Map<string, Record<string, unknown>>>(new Map());
+  // Store initial configs loaded from IPC for dirty comparison
+  const initialConfigsRef = useRef<Map<string, Record<string, unknown>>>(new Map());
+
+  // Compute dirty state
+  const isDirty = useCallback((): boolean => {
+    // Check toggles: compare current state against initial
+    for (const [pluginId, enabled] of pendingToggles) {
+      const initialEnabled = initialPluginsRef.current.get(pluginId);
+      if (initialEnabled !== enabled) return true;
+    }
+    // Check configs
+    for (const [pluginId, config] of pendingConfigs) {
+      const initialConfig = initialConfigsRef.current.get(pluginId);
+      if (JSON.stringify(config) !== JSON.stringify(initialConfig ?? {})) return true;
+    }
+    return false;
+  }, [pendingToggles, pendingConfigs]);
+
+  // Notify parent of dirty state changes
+  useEffect(() => {
+    onDirtyChange?.(isDirty());
+  }, [isDirty, onDirtyChange]);
+
+  // Expose handle to parent
+  useImperativeHandle(handleRef, () => ({
+    getPendingChanges: (): PluginPendingChanges | null => {
+      const dirty = isDirty();
+      if (!dirty) return null;
+
+      const toggles: PluginPendingChanges['toggles'] = [];
+      for (const [pluginId, enabled] of pendingToggles) {
+        const initialEnabled = initialPluginsRef.current.get(pluginId);
+        if (initialEnabled !== enabled) {
+          toggles.push({ pluginId, enabled });
+        }
+      }
+
+      const configs: PluginPendingChanges['configs'] = [];
+      for (const [pluginId, config] of pendingConfigs) {
+        const initialConfig = initialConfigsRef.current.get(pluginId);
+        if (JSON.stringify(config) !== JSON.stringify(initialConfig ?? {})) {
+          configs.push({ pluginId, config });
+        }
+      }
+
+      if (toggles.length === 0 && configs.length === 0) return null;
+      return { toggles, configs };
+    },
+    resetDirty: () => {
+      // Update initial refs to reflect current state after save
+      for (const [pluginId, enabled] of pendingToggles) {
+        initialPluginsRef.current.set(pluginId, enabled);
+      }
+      for (const [pluginId, config] of pendingConfigs) {
+        initialConfigsRef.current.set(pluginId, config);
+      }
+      setPendingToggles(new Map());
+      setPendingConfigs(new Map());
+    },
+  }), [isDirty, pendingToggles, pendingConfigs]);
+
   const loadPlugins = useCallback(async () => {
     const result = await window.electron?.plugins.list();
     if (result?.success && result.plugins) {
       setPlugins(result.plugins);
+      // Snapshot initial enabled state
+      const initial = new Map<string, boolean>();
+      for (const p of result.plugins) {
+        initial.set(p.pluginId, p.enabled);
+      }
+      initialPluginsRef.current = initial;
     }
     setLoading(false);
   }, []);
@@ -106,11 +192,16 @@ export default function PluginsSettings() {
     return cleanup;
   }, [installing]);
 
-  const handleToggle = async (pluginId: string, enabled: boolean) => {
-    await window.electron?.plugins.setEnabled(pluginId, enabled);
+  const handleToggle = (pluginId: string, enabled: boolean) => {
+    // Only update local state — do NOT call IPC
     setPlugins(prev =>
       prev.map(p => p.pluginId === pluginId ? { ...p, enabled } : p),
     );
+    setPendingToggles(prev => {
+      const next = new Map(prev);
+      next.set(pluginId, enabled);
+      return next;
+    });
   };
 
   const handleUninstall = async (pluginId: string) => {
@@ -119,6 +210,19 @@ export default function PluginsSettings() {
     setUninstalling(false);
     if (result?.ok) {
       setPlugins(prev => prev.filter(p => p.pluginId !== pluginId));
+      // Remove from pending state and initial ref
+      initialPluginsRef.current.delete(pluginId);
+      setPendingToggles(prev => {
+        const next = new Map(prev);
+        next.delete(pluginId);
+        return next;
+      });
+      setPendingConfigs(prev => {
+        const next = new Map(prev);
+        next.delete(pluginId);
+        return next;
+      });
+      initialConfigsRef.current.delete(pluginId);
     }
     setConfirmUninstall(null);
   };
@@ -158,6 +262,21 @@ export default function PluginsSettings() {
     }
   };
 
+  const handleConfigChange = useCallback((pluginId: string, config: Record<string, unknown>) => {
+    setPendingConfigs(prev => {
+      const next = new Map(prev);
+      next.set(pluginId, config);
+      return next;
+    });
+  }, []);
+
+  const handleConfigLoaded = useCallback((pluginId: string, config: Record<string, unknown>) => {
+    // Store initial config for dirty comparison (only if not already stored)
+    if (!initialConfigsRef.current.has(pluginId)) {
+      initialConfigsRef.current.set(pluginId, config);
+    }
+  }, []);
+
   const sourceLabel = (source: PluginSource | 'bundled') => {
     switch (source) {
       case 'npm': return i18nService.t('pluginsSourceNpm');
@@ -175,6 +294,9 @@ export default function PluginsSettings() {
       <PluginConfigPage
         pluginId={configPluginId}
         onBack={() => setConfigPluginId(null)}
+        initialConfig={pendingConfigs.get(configPluginId)}
+        onConfigChange={handleConfigChange}
+        onConfigLoaded={handleConfigLoaded}
       />
     );
   }

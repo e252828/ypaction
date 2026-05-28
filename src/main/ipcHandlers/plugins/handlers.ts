@@ -142,4 +142,30 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
       return { ok: false, error: error instanceof Error ? error.message : 'Failed to save plugin config' };
     }
   });
+
+  ipcMain.handle('plugins:batch-save', async (_event, changes: {
+    toggles?: Array<{ pluginId: string; enabled: boolean }>;
+    configs?: Array<{ pluginId: string; config: Record<string, unknown> }>;
+  }) => {
+    try {
+      const { PluginManager } = await import('../../libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      for (const { pluginId, enabled } of changes.toggles ?? []) {
+        manager.setPluginEnabled(pluginId, enabled);
+      }
+      for (const { pluginId, config } of changes.configs ?? []) {
+        manager.savePluginConfig(pluginId, config);
+      }
+      const hasChanges = (changes.toggles?.length ?? 0) > 0 || (changes.configs?.length ?? 0) > 0;
+      if (hasChanges) {
+        await syncOpenClawConfig({
+          reason: 'plugin-batch-save',
+          restartGatewayIfRunning: true,
+        });
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to batch save plugin changes' };
+    }
+  });
 }
