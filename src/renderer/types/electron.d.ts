@@ -384,6 +384,21 @@ interface IElectronAPI {
       error?: string;
     }>;
   };
+  kits: {
+    fetchStore: () => Promise<{ success: boolean; data?: string; error?: string }>;
+    install: (params: {
+      kitId: string;
+      bundleUrl: string;
+      version: string;
+      skillListIds: string[];
+    }) => Promise<{ success: boolean; skillIds?: string[]; error?: string }>;
+    uninstall: (kitId: string) => Promise<{ success: boolean; error?: string }>;
+    listInstalled: () => Promise<{
+      success: boolean;
+      installed?: Record<string, { id: string; version: string; installedAt: number; skillIds: string[] }>;
+      error?: string;
+    }>;
+  };
   agents: {
     list: () => Promise<Agent[]>;
     get: (id: string) => Promise<Agent | null>;

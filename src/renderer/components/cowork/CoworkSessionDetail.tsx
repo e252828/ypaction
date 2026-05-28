@@ -60,6 +60,7 @@ import {
 import UserMessageItem from './UserMessageItem';
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
+  onManageKits?: () => void;
   onContinue: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[]) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
   isSidebarCollapsed?: boolean;
@@ -490,6 +491,7 @@ const EMPTY_ARTIFACTS: Artifact[] = [];
 
 const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onManageSkills,
+  onManageKits,
   onContinue,
   onStop,
   isSidebarCollapsed,
@@ -2615,6 +2617,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             size="large"
             remoteManaged={remoteManaged}
             onManageSkills={remoteManaged ? undefined : onManageSkills}
+            onManageKits={remoteManaged ? undefined : onManageKits}
             showModelSelector={true}
             showReadOnlyContext={true}
             readOnlyContextTrailingText={i18nService.t('aiGeneratedDisclaimer')}

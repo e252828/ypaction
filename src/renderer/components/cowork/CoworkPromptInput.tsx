@@ -15,11 +15,14 @@ import {
   clearDraftAttachments,
   type DraftAttachment,
   setDraftAttachments,
+  setDraftKitIds,
   setDraftPrompt,
+  setDraftSkillIds,
   updateCurrentSessionModelOverride,
 } from '../../store/slices/coworkSlice';
+import { setActiveKitIds, toggleActiveKit } from '../../store/slices/kitSlice';
 import type { Model } from '../../store/slices/modelSlice';
-import { setSkills, toggleActiveSkill } from '../../store/slices/skillSlice';
+import { setActiveSkillIds, setSkills, toggleActiveSkill } from '../../store/slices/skillSlice';
 import { CoworkImageAttachment } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { Skill } from '../../types/skill';
@@ -32,6 +35,7 @@ import DefaultAgentIcon from '../icons/DefaultAgentIcon';
 import PaperClipIcon from '../icons/PaperClipIcon';
 import TaskPauseIcon from '../icons/TaskPauseIcon';
 import XMarkIcon from '../icons/XMarkIcon';
+import { ActiveKitBadge, KitsButton } from '../kits';
 import ModelSelector from '../ModelSelector';
 import { ActiveSkillBadge, SkillsButton } from '../skills';
 import { resolveAgentModelSelection, resolveEffectiveModel, useAgentSelectedModel } from './agentModelSelection';
@@ -181,6 +185,7 @@ interface CoworkPromptInputProps {
   readOnlyContextTrailingText?: string;
   contextAgentId?: string;
   onManageSkills?: () => void;
+  onManageKits?: () => void;
   sessionId?: string;
   contextUsageControl?: React.ReactNode;
   /** When true, hides attachment/skill buttons but keeps the input box visible (disabled) */
@@ -207,6 +212,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       readOnlyContextTrailingText,
       contextAgentId,
       onManageSkills,
+      onManageKits,
       sessionId,
       contextUsageControl,
       remoteManaged = false,
@@ -321,6 +327,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const activeSkillIds = useSelector((state: RootState) => state.skill.activeSkillIds);
   const skills = useSelector((state: RootState) => state.skill.skills);
   const hasActiveSkills = activeSkillIds.some(id => skills.some(skill => skill.id === id));
+  const activeKitIds = useSelector((state: RootState) => state.kit.activeKitIds);
+  const installedKits = useSelector((state: RootState) => state.kit.installedKits);
+  const hasActiveKits = activeKitIds.length > 0;
+  const draftKitIdsForKey = useSelector((state: RootState) => state.cowork.draftKitIds[draftKey]);
+  const draftSkillIdsForKey = useSelector((state: RootState) => state.cowork.draftSkillIds[draftKey]);
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
   const {
@@ -344,10 +355,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const isLarge = size === 'large';
   const useHomeContextLayout = isLarge && showAgentSelector;
   const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext);
+  const hasActiveContext = hasActiveSkills || hasActiveKits;
   const minHeight = isLarge
     ? useHomeContextLayout
-      ? hasActiveSkills ? 36 : 52
-      : hasActiveSkills ? 44 : 60
+      ? hasActiveContext ? 36 : 52
+      : hasActiveContext ? 44 : 60
     : 24;
   const maxHeight = isLarge ? 200 : 200;
 
@@ -397,6 +409,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       } else if (shouldClear) {
         setValue('');
         dispatch(clearDraftAttachments(draftKey));
+        dispatch(setDraftKitIds({ draftKey, kitIds: [] }));
+        dispatch(setActiveKitIds([]));
         setImageVisionHint(false);
       }
       requestAnimationFrame(() => {
@@ -490,6 +504,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
   }, [value]);
 
+  // Restore active kit/skill IDs from draft when draftKey changes
+  useEffect(() => {
+    dispatch(setActiveKitIds(draftKitIdsForKey || []));
+    dispatch(setActiveSkillIds(draftSkillIdsForKey || []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]); // intentionally only trigger on session/draft switch
+
+  // Persist active kit IDs to draft store
+  useEffect(() => {
+    dispatch(setDraftKitIds({ draftKey, kitIds: activeKitIds }));
+  }, [activeKitIds, draftKey, dispatch]);
+
+  // Persist active skill IDs to draft store
+  useEffect(() => {
+    dispatch(setDraftSkillIds({ draftKey, skillIds: activeSkillIds }));
+  }, [activeSkillIds, draftKey, dispatch]);
+
   const mediaLabels = useMemo(() => computeMediaLabels(attachments), [attachments]);
   const mediaMentionSegments = useMemo(
     () => buildMediaMentionSegments(value, mediaLabels),
@@ -561,8 +592,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     if ((!trimmedValue && attachments.length === 0) || disabled || isPatchingModel) return;
     setShowFolderRequiredWarning(false);
 
-    // Get active skills prompts and combine them
-    const activeSkills = activeSkillIds
+    // Get active skills prompts and combine them (including skills from active kits)
+    const kitSkillIds = activeKitIds.flatMap(kitId => installedKits[kitId]?.skillIds ?? []);
+    const allSkillIds = [...new Set([...activeSkillIds, ...kitSkillIds])];
+    const activeSkills = allSkillIds
       .map(id => skills.find(s => s.id === id))
       .filter((s): s is Skill => s !== undefined);
     const skillPrompt = activeSkills.length > 0
@@ -649,7 +682,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
     dispatch(clearDraftAttachments(draftKey));
     setImageVisionHint(false);
-  }, [value, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels]);
+  }, [value, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
@@ -660,6 +693,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onManageSkills();
     }
   }, [onManageSkills]);
+
+  const handleSelectKit = useCallback((kitId: string) => {
+    dispatch(toggleActiveKit(kitId));
+  }, [dispatch]);
+
+  const handleManageKits = useCallback(() => {
+    if (onManageKits) {
+      onManageKits();
+    }
+  }, [onManageKits]);
 
   const handleSelectAgent = useCallback((agentId: string) => {
     if (!agentId || agentId === currentAgentId) {
@@ -754,8 +797,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const textareaClass = isLarge
     ? `w-full resize-none bg-transparent px-4 pb-2 text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none min-h-[${minHeight}px] max-h-[${maxHeight}px] ${
       useHomeContextLayout
-        ? `${hasActiveSkills ? 'pt-2' : 'pt-3'} text-[14px] leading-[22px]`
-        : `${hasActiveSkills ? 'pt-2' : 'pt-2.5'} text-[15px] leading-[23px]`
+        ? `${hasActiveContext ? 'pt-2' : 'pt-3'} text-[14px] leading-[22px]`
+        : `${hasActiveContext ? 'pt-2' : 'pt-2.5'} text-[15px] leading-[23px]`
     }`
     : 'flex-1 resize-none bg-transparent text-foreground placeholder:placeholder:text-secondary focus:outline-none text-sm leading-relaxed min-h-[24px] max-h-[200px]';
 
@@ -1207,6 +1250,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         onSelectSkill={handleSelectSkill}
         onManageSkills={handleManageSkills}
       />
+      <KitsButton
+        onSelectKit={handleSelectKit}
+        onManageKits={handleManageKits}
+      />
     </div>
   ) : null;
   const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';
@@ -1239,7 +1286,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     </button>
   );
 
-  const activeSkillContextRow = isLarge && hasActiveSkills ? (
+  const activeSkillContextRow = isLarge && hasActiveContext ? (
     <div
       className="flex cursor-text flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-4"
       onClick={() => {
@@ -1247,6 +1294,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       }}
     >
       <ActiveSkillBadge />
+      <ActiveKitBadge />
     </div>
   ) : null;
   const textareaPlaceholder = placeholder;

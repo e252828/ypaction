@@ -28,6 +28,11 @@ export const getSkillStoreUrl = () => isTestModeEnabled()
   ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'
   : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/skill-store';
 
+// Kit 商店
+export const getKitStoreUrl = () => isTestModeEnabled()
+  ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/kit-store'
+  : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/kit-store';
+
 // 登录地址
 export const getLoginOvermindUrl = () => isTestModeEnabled()
   ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/login-url'

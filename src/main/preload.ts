@@ -64,6 +64,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('mcp:setEnabled', options),
     fetchMarketplace: () => ipcRenderer.invoke('mcp:fetchMarketplace'),
   },
+  kits: {
+    fetchStore: () => ipcRenderer.invoke('kits:fetchStore'),
+    install: (params: { kitId: string; bundleUrl: string; version: string; skillListIds: string[] }) =>
+      ipcRenderer.invoke('kits:install', params),
+    uninstall: (kitId: string) => ipcRenderer.invoke('kits:uninstall', kitId),
+    listInstalled: () => ipcRenderer.invoke('kits:listInstalled'),
+  },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
     requestCalendar: () => ipcRenderer.invoke('permissions:requestCalendar'),
