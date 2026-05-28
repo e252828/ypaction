@@ -1,4 +1,4 @@
-import { test, expect, vi } from 'vitest';
+import { expect, test, vi } from 'vitest';
 
 vi.mock('electron', () => ({
   app: { getAppPath: () => process.cwd(), getPath: () => '/tmp' },
