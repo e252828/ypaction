@@ -1009,6 +1009,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkForkFileStateWarning:
       '当前文件和工作树状态会保持不变，不会回滚到早期消息当时。如果后续轮次改过文件，新分支上下文可能与当前磁盘内容不一致。',
     coworkForkToLocal: '派生到本地',
+    coworkForkFromMessage: '从此处分叉',
     coworkForkCreated: '已创建分叉会话',
     coworkForkFailed: '分叉会话失败',
     coworkForkRunningBlocked: '请先停止当前任务，再创建分叉。',
@@ -3299,6 +3300,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkForkFileStateWarning:
       'Your current files and worktree stay unchanged. They will not roll back to an earlier message. If later turns changed files, the new branch context may not match what is currently on disk.',
     coworkForkToLocal: 'Fork locally',
+    coworkForkFromMessage: 'Fork from here',
     coworkForkCreated: 'Forked session created',
     coworkForkFailed: 'Failed to fork session',
     coworkForkRunningBlocked: 'Stop the current task before creating a fork.',

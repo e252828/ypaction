@@ -621,6 +621,26 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     void coworkService.compactContext(currentSession.id);
   }, [currentSession?.id]);
 
+  const handleForkMessage = useCallback((messageId: string) => {
+    if (!currentSession?.id) {
+      console.warn('[CoworkFork] message fork was ignored because no session is selected');
+      return;
+    }
+    if (isStreaming || currentSession.status === CoworkSessionStatusValue.Running) {
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkForkRunningBlocked'),
+      }));
+      console.warn('[CoworkFork] message fork was rejected because the session is still running');
+      return;
+    }
+
+    console.log('[CoworkFork] requesting a fork from an assistant message action');
+    void coworkService.forkSession({
+      sessionId: currentSession.id,
+      forkedFromMessageId: messageId,
+    });
+  }, [currentSession?.id, currentSession?.status, isStreaming]);
+
   // ─── Artifact detection ─────────────────────────────────────────────
   const isPanelOpen = useSelector((state: RootState) => selectIsPanelOpen(state, sessionId));
   const panelWidth = useSelector(selectPanelWidth);
@@ -2060,6 +2080,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 resolveLocalFilePath={resolveLocalFilePath}
                 mapDisplayText={mapDisplayText}
                 onOpenLocalService={handleOpenLocalServiceArtifact}
+                onForkMessage={remoteManaged ? undefined : handleForkMessage}
                 showTypingIndicator={showTypingIndicator}
                 showCopyButtons={!isStreaming || !isLastTurn}
               />

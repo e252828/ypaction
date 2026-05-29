@@ -1,11 +1,12 @@
 import { ShareIcon } from '@heroicons/react/20/solid';
-import { ArrowsRightLeftIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
 import Modal from '../common/Modal';
 import EditIcon from '../icons/EditIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
+import ForkBranchIcon from '../icons/ForkBranchIcon';
 import ListChecksIcon from '../icons/ListChecksIcon';
 import LoadingIcon from '../icons/LoadingIcon';
 import PushPinIcon from '../icons/PushPinIcon';
@@ -359,7 +360,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
             className={menuItemClassName}
             role="menuitem"
           >
-            <ArrowsRightLeftIcon className={menuIconClassName} />
+            <ForkBranchIcon className={menuIconClassName} />
             {i18nService.t('coworkForkSession')}
           </button>
           <button
@@ -398,7 +399,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
         >
           <div className="flex items-center gap-3 px-5 py-4">
             <div className="p-2 rounded-full bg-surface-raised">
-              <ArrowsRightLeftIcon className="h-5 w-5 text-foreground" />
+              <ForkBranchIcon className="h-5 w-5 text-foreground" />
             </div>
             <h2 className="text-base font-semibold text-foreground">
               {i18nService.t('coworkForkConfirmTitle')}
