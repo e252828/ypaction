@@ -65,6 +65,8 @@ import {
 } from '../shared/localWebServices/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { ProviderName } from '../shared/providers';
+import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
+import { ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME } from './appConstants';
 import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
@@ -1048,14 +1050,16 @@ const safeDecodeURIComponent = (value: string): string => {
 };
 
 const normalizeWindowsShellPath = (inputPath: string): string => {
-  if (!isWindows) return inputPath;
-
   const trimmed = inputPath.trim();
   if (!trimmed) return inputPath;
 
   let normalized = trimmed;
-  if (/^file:\/\//i.test(normalized)) {
-    normalized = safeDecodeURIComponent(normalized.replace(/^file:\/\//i, ''));
+  if (/^(?:file|localfile):\/\//i.test(normalized)) {
+    normalized = safeDecodeURIComponent(normalized.replace(/^(?:file|localfile):\/\//i, ''));
+  }
+
+  if (!isWindows) {
+    return normalized;
   }
 
   if (/^\/[A-Za-z]:/.test(normalized)) {
@@ -7768,28 +7772,75 @@ if (!gotTheLock) {
     },
   );
 
+  const getFileAccessFailureReason = (error: unknown): ShellOpenFailureReasonType => {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'ENOENT') {
+      return ShellOpenFailureReason.NotFound;
+    }
+    if (code === 'EACCES' || code === 'EPERM') {
+      return ShellOpenFailureReason.PermissionDenied;
+    }
+    return ShellOpenFailureReason.Unknown;
+  };
+
+  const getFailedShellPathStatus = async (
+    normalizedPath: string,
+    fallbackError: string,
+  ): Promise<{ success: false; error: string; reason: ShellOpenFailureReasonType }> => {
+    try {
+      await fs.promises.stat(normalizedPath);
+      return {
+        success: false,
+        error: fallbackError,
+        reason: ShellOpenFailureReason.OpenFailed,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: fallbackError,
+        reason: getFileAccessFailureReason(error),
+      };
+    }
+  };
+
   // Shell handlers - 打开文件/文件夹
   ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
       const result = await shell.openPath(normalizedPath);
       if (result) {
-        // 如果返回非空字符串，表示打开失败
-        return { success: false, error: result };
+        return await getFailedShellPathStatus(normalizedPath, result);
       }
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      const normalizedPath = normalizeWindowsShellPath(filePath);
+      return await getFailedShellPathStatus(
+        normalizedPath,
+        error instanceof Error ? error.message : 'Unknown error',
+      );
     }
   });
 
   ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
+      try {
+        await fs.promises.stat(normalizedPath);
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          reason: getFileAccessFailureReason(error),
+        };
+      }
       shell.showItemInFolder(normalizedPath);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        reason: ShellOpenFailureReason.Unknown,
+      };
     }
   });
 
@@ -7830,12 +7881,16 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle('shell:openPathWithApp', async (_event, filePath: string, appPath: string) => {
+    const normalizedPath = normalizeWindowsShellPath(filePath);
     try {
       const { openFileWithApp } = await import('./shellApps');
-      await openFileWithApp(filePath, appPath);
+      await openFileWithApp(normalizedPath, appPath);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      return await getFailedShellPathStatus(
+        normalizedPath,
+        error instanceof Error ? error.message : 'Unknown error',
+      );
     }
   });
 
