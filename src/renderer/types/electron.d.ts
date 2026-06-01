@@ -10,6 +10,11 @@ import type {
 } from '../../shared/cowork/constants';
 import type { HtmlShareAccessMode, HtmlShareStatus } from '../../shared/htmlShare/constants';
 import type {
+  InstalledKitRecord,
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../../shared/kit/constants';
+import type {
   ListLocalWebServicesOptions,
   LocalWebService,
 } from '../../shared/localWebServices/constants';
@@ -398,11 +403,13 @@ interface IElectronAPI {
       bundleUrl: string;
       version: string;
       skillListIds: string[];
+      mcpServers?: unknown[] | null;
+      connectors?: unknown[] | null;
     }) => Promise<{ success: boolean; skillIds?: string[]; error?: string }>;
     uninstall: (kitId: string) => Promise<{ success: boolean; error?: string }>;
     listInstalled: () => Promise<{
       success: boolean;
-      installed?: Record<string, { id: string; version: string; installedAt: number; skillIds: string[] }>;
+      installed?: Record<string, InstalledKitRecord>;
       error?: string;
     }>;
   };
@@ -527,6 +534,10 @@ interface IElectronAPI {
       systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       agentId?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
@@ -543,6 +554,10 @@ interface IElectronAPI {
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;

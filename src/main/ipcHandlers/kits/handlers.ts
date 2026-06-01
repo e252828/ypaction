@@ -5,6 +5,7 @@ import http from 'http';
 import https from 'https';
 import path from 'path';
 
+import type { InstalledKitRecord } from '../../../shared/kit/constants';
 import { cpRecursiveSync } from '../../fsCompat';
 import type { SkillManager } from '../../skillManager';
 import type { SqliteStore } from '../../sqliteStore';
@@ -44,14 +45,11 @@ export interface KitHandlerDeps {
   getSkillManager: () => SkillManager;
 }
 
-interface InstalledKitRecord {
-  id: string;
-  version: string;
-  installedAt: number;
-  skillIds: string[];
-}
-
 type InstalledKitsMap = Record<string, InstalledKitRecord>;
+
+const normalizeCapabilityList = (value: unknown): unknown[] => (
+  Array.isArray(value) ? value : []
+);
 
 function getSkillsRoot(): string {
   return path.resolve(app.getPath('userData'), SKILLS_DIR_NAME);
@@ -176,6 +174,8 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
     bundleUrl: string;
     version: string;
     skillListIds: string[];
+    mcpServers?: unknown[] | null;
+    connectors?: unknown[] | null;
   }) => {
     const { kitId, bundleUrl, version, skillListIds: _skillListIds } = params;
     console.log(`[KitStore] Installing kit "${kitId}" v${version} from ${bundleUrl}`);
@@ -239,7 +239,9 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
         id: kitId,
         version,
         installedAt: Date.now(),
-        skillIds: installedSkillIds,
+        skills: installedSkillIds.length > 0 ? { skillIds: installedSkillIds } : null,
+        mcpServers: normalizeCapabilityList(params.mcpServers),
+        connectors: normalizeCapabilityList(params.connectors),
       };
       getStore().set(KITS_INSTALLED_KEY, installedMap);
 
@@ -276,7 +278,7 @@ export function registerKitHandlers(deps: KitHandlerDeps): void {
       const root = getSkillsRoot();
       const stateMap = getStore().get<Record<string, { enabled: boolean }>>('skills_state') ?? {};
 
-      for (const skillId of kitRecord.skillIds) {
+      for (const skillId of kitRecord.skills?.skillIds ?? []) {
         const skillDir = path.resolve(root, skillId);
         if (fs.existsSync(skillDir)) {
           try {

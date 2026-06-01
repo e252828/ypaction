@@ -1093,6 +1093,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Skills
     skills: '技能',
+    useSkill: '使用技能',
     searchSkills: '搜索技能',
     manageSkills: '管理技能',
     officialSkills: '官方技能',
@@ -3389,6 +3390,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // Skills
     skills: 'Skills',
+    useSkill: 'Use Skill',
     searchSkills: 'Search skills',
     manageSkills: 'Manage Skills',
     officialSkills: 'Official Skills',

@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -7,6 +7,7 @@ import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
+import { getInstalledKitSkillIds } from '../../services/kitCapability';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
 import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
@@ -54,6 +55,7 @@ import {
   resolveMediaMentionTrigger,
 } from './mediaMentionUtils';
 import MediaModelPicker from './MediaModelPicker';
+import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
 import { buildSelectedSkillRoutingPrompt } from './selectedSkillRoutingPrompt';
 import { usePersistAgentModelSelection } from './usePersistAgentModelSelection';
 
@@ -227,12 +229,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const addMenuButtonRef = useRef<HTMLButtonElement>(null);
     const addMenuRef = useRef<HTMLDivElement>(null);
+    const skillMenuItemRef = useRef<HTMLButtonElement>(null);
     const folderButtonRef = useRef<HTMLButtonElement>(null);
     const agentButtonRef = useRef<HTMLButtonElement>(null);
     const agentMenuRef = useRef<HTMLDivElement>(null);
     const readOnlyContextGroupRef = useRef<HTMLDivElement>(null);
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const skillPopoverCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const modelPatchRequestIdRef = useRef(0);
 
   // 暴露方法给父组件
@@ -314,6 +318,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const hasActiveSkills = activeSkillIds.some(id => skills.some(skill => skill.id === id));
   const activeKitIds = useSelector((state: RootState) => state.kit.activeKitIds);
   const installedKits = useSelector((state: RootState) => state.kit.installedKits);
+  const marketplaceKits = useSelector((state: RootState) => state.kit.marketplaceKits);
   const hasActiveKits = activeKitIds.length > 0;
   const draftKitIdsForKey = useSelector((state: RootState) => state.cowork.draftKitIds[draftKey]);
   const draftSkillIdsForKey = useSelector((state: RootState) => state.cowork.draftSkillIds[draftKey]);
@@ -341,10 +346,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const useHomeContextLayout = isLarge && showAgentSelector;
   const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext);
   const hasActiveContext = hasActiveSkills || hasActiveKits;
+  const hasAttachments = attachments.length > 0;
   const minHeight = isLarge
     ? useHomeContextLayout
-      ? hasActiveContext ? 36 : 52
-      : hasActiveContext ? 44 : 60
+      ? hasAttachments ? 34 : hasActiveContext ? 36 : 52
+      : hasAttachments ? 38 : hasActiveContext ? 44 : 60
     : 24;
   const maxHeight = isLarge ? 200 : 200;
 
@@ -485,6 +491,24 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [showAddMenu]);
 
   useEffect(() => {
+    if (!showAddMenu) {
+      if (skillPopoverCloseTimerRef.current) {
+        clearTimeout(skillPopoverCloseTimerRef.current);
+        skillPopoverCloseTimerRef.current = null;
+      }
+      setShowSkillsPopover(false);
+    }
+  }, [showAddMenu]);
+
+  useEffect(() => {
+    return () => {
+      if (skillPopoverCloseTimerRef.current) {
+        clearTimeout(skillPopoverCloseTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     modelPatchRequestIdRef.current += 1;
     setIsPatchingModel(false);
   }, [sessionId]);
@@ -603,12 +627,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     // Get selected skill routing metadata, including skills from active kits.
     // OpenClaw loads SKILL.md files natively; do not inline full skill bodies here.
-    const kitSkillIds = activeKitIds.flatMap(kitId => installedKits[kitId]?.skillIds ?? []);
+    const kitSkillIds = activeKitIds.flatMap(kitId => getInstalledKitSkillIds(installedKits[kitId]));
     const allSkillIds = [...new Set([...activeSkillIds, ...kitSkillIds])];
     const activeSkills = allSkillIds
       .map(id => skills.find(s => s.id === id))
       .filter((s): s is Skill => s !== undefined);
-    const skillPrompt = buildSelectedSkillRoutingPrompt(activeSkills);
+    const kitPrompt = buildSelectedKitContextPrompt(activeKitIds, marketplaceKits, installedKits);
+    const skillPrompt = [
+      kitPrompt,
+      buildSelectedSkillRoutingPrompt(activeSkills),
+    ].filter(Boolean).join('\n\n') || undefined;
 
     // Extract image attachments (with base64 data) for vision-capable models
     console.log('[CoworkPromptInput] handleSubmit: attachment diagnosis', {
@@ -690,13 +718,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
     dispatch(clearDraftAttachments(draftKey));
     setImageVisionHint(false);
-  }, [value, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels]);
+  }, [value, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
   }, [dispatch]);
 
   const handleManageSkills = useCallback(() => {
+    setShowAddMenu(false);
+    setShowSkillsPopover(false);
     if (onManageSkills) {
       onManageSkills();
     }
@@ -1071,13 +1101,31 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [addAttachment, effectiveSelectedModel, isAddingFile, disabled, isStreaming, modelSupportsImage]);
 
   const handleOpenAddMenu = useCallback(() => {
+    if (skillPopoverCloseTimerRef.current) {
+      clearTimeout(skillPopoverCloseTimerRef.current);
+      skillPopoverCloseTimerRef.current = null;
+    }
     setShowSkillsPopover(false);
     setShowAddMenu(prev => !prev);
   }, []);
 
   const handleOpenSkillsPopover = useCallback(() => {
-    setShowAddMenu(false);
+    if (skillPopoverCloseTimerRef.current) {
+      clearTimeout(skillPopoverCloseTimerRef.current);
+      skillPopoverCloseTimerRef.current = null;
+    }
+    setShowAddMenu(true);
     setShowSkillsPopover(true);
+  }, []);
+
+  const handleScheduleCloseSkillsPopover = useCallback(() => {
+    if (skillPopoverCloseTimerRef.current) {
+      clearTimeout(skillPopoverCloseTimerRef.current);
+    }
+    skillPopoverCloseTimerRef.current = setTimeout(() => {
+      setShowSkillsPopover(false);
+      skillPopoverCloseTimerRef.current = null;
+    }, 320);
   }, []);
 
   const handleRemoveAttachment = useCallback((path: string) => {
@@ -1138,7 +1186,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     void handleIncomingFiles(files);
   }, [disabled, handleIncomingFiles, isStreaming]);
 
-  const canSubmit = !disabled && !isPatchingModel && !agentModelIsInvalid && (!!value.trim() || attachments.length > 0);
+  const canSubmit = !disabled && !isPatchingModel && !agentModelIsInvalid && (!!value.trim() || hasAttachments);
   const enhancedContainerClass = isDraggingFiles
     ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
     : containerClass;
@@ -1271,12 +1319,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       {showAddMenu && (
         <div
           ref={addMenuRef}
-          className="absolute bottom-full left-0 z-50 mb-2 w-44 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-popover"
+          className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface py-1 shadow-popover"
           role="menu"
+          onMouseEnter={() => {
+            if (skillPopoverCloseTimerRef.current) {
+              clearTimeout(skillPopoverCloseTimerRef.current);
+              skillPopoverCloseTimerRef.current = null;
+            }
+          }}
+          onMouseLeave={handleScheduleCloseSkillsPopover}
         >
           <button
             type="button"
             onClick={handleAddFile}
+            onMouseEnter={handleScheduleCloseSkillsPopover}
             disabled={disabled || isStreaming || isAddingFile}
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
             role="menuitem"
@@ -1284,25 +1340,45 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <PaperClipIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 truncate">{i18nService.t('coworkAddFile')}</span>
           </button>
+          {showSkillsPopover && (
+            <div
+              aria-hidden="true"
+              className="absolute bottom-0 left-[calc(100%-1px)] z-[55] h-80 w-40"
+              onMouseEnter={handleOpenSkillsPopover}
+              onMouseLeave={handleScheduleCloseSkillsPopover}
+            />
+          )}
           <button
+            ref={skillMenuItemRef}
             type="button"
             onClick={handleOpenSkillsPopover}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface-raised"
+            onMouseEnter={handleOpenSkillsPopover}
+            onFocus={handleOpenSkillsPopover}
+            className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors ${
+              showSkillsPopover ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+            }`}
             role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={showSkillsPopover}
           >
             <SkillIcon className="h-5 w-5 shrink-0 text-secondary" />
-            <span className="min-w-0 truncate">{i18nService.t('skills')}</span>
+            <span className="min-w-0 flex-1 truncate">{i18nService.t('useSkill')}</span>
+            <ChevronRightIcon className="h-4 w-4 shrink-0 text-secondary" />
           </button>
+
+          <SkillsPopover
+            isOpen={showSkillsPopover}
+            onClose={() => setShowSkillsPopover(false)}
+            onSelectSkill={handleSelectSkill}
+            onManageSkills={handleManageSkills}
+            anchorRef={skillMenuItemRef as React.RefObject<HTMLElement>}
+            asSubmenu
+            autoFocusSearch={false}
+            onMouseEnter={handleOpenSkillsPopover}
+            onMouseLeave={handleScheduleCloseSkillsPopover}
+          />
         </div>
       )}
-
-      <SkillsPopover
-        isOpen={showSkillsPopover}
-        onClose={() => setShowSkillsPopover(false)}
-        onSelectSkill={handleSelectSkill}
-        onManageSkills={handleManageSkills}
-        anchorRef={addMenuButtonRef as React.RefObject<HTMLElement>}
-      />
     </div>
   ) : null;
 
@@ -1315,6 +1391,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       />
     </div>
   ) : null;
+  const largeInputToolActions = (
+    <div className="flex items-center gap-0.5">
+      {largeInputActions}
+      <MediaModelPicker draftKey={draftKey} disabled={disabled} />
+    </div>
+  );
   const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';
   const largeSendIconSizeClass = useCompactSendButton ? 'h-4 w-4' : 'h-[18px] w-[18px]';
 
@@ -1344,6 +1426,34 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       <ArrowUpIcon className={largeSendIconSizeClass} />
     </button>
   );
+
+  const attachmentPreviewContent = hasAttachments ? (
+    <div className="flex flex-wrap gap-2">
+      {attachments.map((attachment) => {
+        const ml = mediaLabels.find(m => m.attachment.path === attachment.path);
+        return (
+          <AttachmentCard
+            key={attachment.path}
+            attachment={attachment}
+            onRemove={handleRemoveAttachment}
+            label={ml?.label}
+          />
+        );
+      })}
+    </div>
+  ) : null;
+
+  const largeAttachmentPreview = hasAttachments ? (
+    <div className="max-h-[156px] overflow-y-auto px-4 pb-1 pt-3">
+      {attachmentPreviewContent}
+    </div>
+  ) : null;
+
+  const compactAttachmentPreview = hasAttachments ? (
+    <div className="mb-2 max-h-[164px] overflow-y-auto rounded-xl bg-black/[0.035] p-2 dark:bg-white/[0.055]">
+      {attachmentPreviewContent}
+    </div>
+  ) : null;
 
   const activeSkillContextRow = isLarge && hasActiveContext ? (
     <div
@@ -1469,23 +1579,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   return (
     <div className="relative">
-      {attachments.length > 0 && (
-        <div className="mb-2 max-h-[164px] overflow-y-auto rounded-xl bg-black/[0.035] p-2 dark:bg-white/[0.055]">
-          <div className="flex flex-wrap gap-2">
-            {attachments.map((attachment) => {
-              const ml = mediaLabels.find(m => m.attachment.path === attachment.path);
-              return (
-                <AttachmentCard
-                  key={attachment.path}
-                  attachment={attachment}
-                  onRemove={handleRemoveAttachment}
-                  label={ml?.label}
-                />
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {!isLarge && compactAttachmentPreview}
       {imageVisionHint && (
         <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400">
           <ExclamationTriangleIcon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
@@ -1517,6 +1611,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           useHomeContextLayout ? (
             <>
               <div className="relative z-10 rounded-2xl border border-border bg-surface shadow-card">
+                {largeAttachmentPreview}
                 {activeSkillContextRow}
                 {renderMentionTextarea({
                   rows: 2,
@@ -1534,8 +1629,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 )}
                 <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-1">
                   <div className="flex min-w-0 items-center gap-2">
-                    {largeInputActions}
-                    <MediaModelPicker draftKey={draftKey} disabled={disabled} />
+                    {largeInputToolActions}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {contextUsageControl}
@@ -1623,6 +1717,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             </>
           ) : (
             <>
+              {largeAttachmentPreview}
               {activeSkillContextRow}
               {renderMentionTextarea({
                 rows: 2,
@@ -1685,8 +1780,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       )}
                     </>
                   )}
-                  {largeInputActions}
-                  <MediaModelPicker draftKey={draftKey} disabled={disabled} />
+                  {largeInputToolActions}
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {contextUsageControl}

@@ -8,6 +8,10 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AgentId, normalizeAgentAvatarIcon } from '../shared/agent';
 import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE } from '../shared/cowork/constants';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../shared/kit/constants';
 
 
 // Default working directory for new users
@@ -378,6 +382,9 @@ export interface CoworkMessageMetadata {
   isStreaming?: boolean;
   isFinal?: boolean;
   skillIds?: string[];
+  kitIds?: string[];
+  kitReferences?: KitReference[];
+  resolvedKitCapabilities?: ResolvedKitCapabilities;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;

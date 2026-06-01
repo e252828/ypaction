@@ -10,6 +10,10 @@ import {
   CoworkSystemMessageKind,
 } from '../../../common/coworkSystemMessages';
 import type { OpenClawSessionPatch } from '../../../common/openclawSession';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../../../shared/kit/constants';
 import type { CoworkExecutionMode, CoworkMessage, CoworkMessageMetadata, CoworkSession, CoworkSessionStatus, CoworkStore } from '../../coworkStore';
 import { t } from '../../i18n';
 import { MediaGenerationTool } from '../../mediaGenerationPolicy';
@@ -2403,6 +2407,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
+      messageSkillIds: options.messageSkillIds,
+      kitIds: options.kitIds,
+      kitReferences: options.kitReferences,
+      resolvedKitCapabilities: options.resolvedKitCapabilities,
       systemPrompt: options.systemPrompt,
       confirmationMode: options.confirmationMode,
       imageAttachments: options.imageAttachments,
@@ -2417,6 +2425,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage: false,
       systemPrompt: options.systemPrompt,
       skillIds: options.skillIds,
+      messageSkillIds: options.messageSkillIds,
+      kitIds: options.kitIds,
+      kitReferences: options.kitReferences,
+      resolvedKitCapabilities: options.resolvedKitCapabilities,
       imageAttachments: options.imageAttachments,
       mediaSelection: options.mediaSelection,
       mediaReferences: options.mediaReferences,
@@ -2667,6 +2679,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       skipInitialUserMessage?: boolean;
       systemPrompt?: string;
       skillIds?: string[];
+      messageSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       confirmationMode?: 'modal' | 'text';
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       agentId?: string;
@@ -2695,9 +2711,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.confirmationModeBySession.set(sessionId, confirmationMode);
 
     if (!options.skipInitialUserMessage) {
-      const metadata = (options.skillIds?.length || options.imageAttachments?.length)
+      const messageSkillIds = options.messageSkillIds ?? options.skillIds;
+      const metadata = (messageSkillIds?.length || options.kitIds?.length || options.imageAttachments?.length)
         ? {
-          ...(options.skillIds?.length ? { skillIds: options.skillIds } : {}),
+          ...(messageSkillIds?.length ? { skillIds: messageSkillIds } : {}),
+          ...(options.kitIds?.length ? {
+            kitIds: options.kitIds,
+            ...(options.kitReferences?.length ? { kitReferences: options.kitReferences } : {}),
+            ...(options.resolvedKitCapabilities ? { resolvedKitCapabilities: options.resolvedKitCapabilities } : {}),
+          } : {}),
           ...(options.imageAttachments?.length ? { imageAttachments: options.imageAttachments } : {}),
         }
         : undefined;
