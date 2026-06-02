@@ -8,15 +8,39 @@ export interface UserProfile {
   userId?: string;         // exchange endpoint only (string "6")
   id?: number;             // profile endpoint only (number 6)
   status?: number;         // profile endpoint only
+  provider?: string;
+  openidIssuer?: string;
+  openidId?: string;
+  email?: string;
+  username?: string;
+  name?: string;
+  roles?: string[];
 }
 
 export interface UserQuota {
+  source?: 'aihub' | string;
   planName: string;           // "免费", "标准", "进阶", "专业"
   subscriptionStatus: string; // "free" | "active"
   creditsLimit: number;       // total credits limit
   creditsUsed: number;        // credits used
   creditsRemaining: number;   // credits remaining
   hasPaidCredits?: boolean;   // true if user has subscription, boost, or invitation credits
+  tokenCredits?: number;
+  usedQuota?: number;
+  remainingAmount?: number;
+  usedAmount?: number;
+  monthRemainingQuota?: number | null;
+  monthUsedTokens?: number;
+  monthUsedQuota?: number;
+  monthlyQuota?: number | null;
+  monthlyQuotaUnlimited?: boolean;
+  monthRemainingQuotaRaw?: number | null;
+  monthUsedQuotaRaw?: number;
+  monthlyQuotaRaw?: number | null;
+  quotaCurrency?: string;
+  quotaUnit?: string;
+  periodStart?: number;
+  periodEnd?: number;
 }
 
 export interface CreditItem {

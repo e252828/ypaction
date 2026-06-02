@@ -2,7 +2,7 @@ import { ChatBubbleLeftIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, GlobeAltIcon, 
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { type AppUpdateInfo,type AppUpdateRuntimeState,AppUpdateSource,AppUpdateStatus } from '../../shared/appUpdate/constants';
+import { type AppUpdateInfo } from '../../shared/appUpdate/constants';
 import {
   type BrowserWebAccessConfig,
   defaultBrowserWebAccessConfig,
@@ -18,7 +18,6 @@ import { decryptSecret, decryptWithPassword, EncryptedPayload, encryptWithPasswo
 import { i18nService, LanguageType } from '../services/i18n';
 import { imService } from '../services/im';
 import { themeService } from '../services/theme';
-import type { RootState } from '../store';
 import { selectCoworkConfig } from '../store/selectors/coworkSelectors';
 import { setAvailableModels } from '../store/slices/modelSlice';
 import type {
@@ -83,23 +82,6 @@ const SettingsSlidersIcon: React.FC<{ className?: string }> = ({ className }) =>
     <path d="M19 7h-9" />
     <circle cx="17" cy="17" r="3" />
     <circle cx="7" cy="7" r="3" />
-  </svg>
-);
-
-const DreamingTabIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg
-    width="34"
-    height="34"
-    viewBox="0 0 34 34"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={className}
-    aria-hidden="true"
-  >
-    <path
-      d="M27.9219 21.9648L29.014 22.4621L29.8552 20.6145L27.831 20.7683L27.9219 21.9648ZM16.0762 5.03516L17.1683 5.53234L18.0095 3.68449L15.9851 3.83862L16.0762 5.03516ZM27.9219 21.9648L26.8297 21.4676C25.1281 25.205 21.3674 27.8 17 27.8V29V30.2C22.3442 30.2 26.9378 27.0221 29.014 22.4621L27.9219 21.9648ZM17 29V27.8C11.0353 27.8 6.2 22.9647 6.2 17H5H3.8C3.8 24.2902 9.70984 30.2 17 30.2V29ZM5 17H6.2C6.2 11.3157 10.5923 6.65614 16.1673 6.23169L16.0762 5.03516L15.9851 3.83862C9.16855 4.35759 3.8 10.0512 3.8 17H5ZM16.0762 5.03516L14.984 4.53798C14.2262 6.20275 13.8 8.052 13.8 10H15H16.2C16.2 8.40537 16.5483 6.8944 17.1683 5.53234L16.0762 5.03516ZM15 10H13.8C13.8 17.2902 19.7098 23.2 27 23.2V22V20.8C21.0353 20.8 16.2 15.9647 16.2 10H15ZM27 22V23.2C27.3413 23.2 27.679 23.1868 28.0128 23.1614L27.9219 21.9648L27.831 20.7683C27.5562 20.7892 27.2791 20.8 27 20.8V22Z"
-      fill="currentColor"
-    />
   </svg>
 );
 
@@ -170,8 +152,6 @@ interface ProvidersImportPayload {
 }
 
 const ABOUT_CONTACT_EMAIL = 'ypaction@eshypdata.com';
-const ABOUT_USER_MANUAL_URL = 'https://lobsterai.youdao.com/#/docs/lobsterai_user_manual';
-const ABOUT_USER_COMMUNITY_URL = 'https://lobsterai.youdao.com/#/about';
 const ABOUT_SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
 
 // MiniMax Portal OAuth constants
@@ -240,26 +220,6 @@ const copyTextToClipboard = async (text: string): Promise<boolean> => {
   } catch (fallbackError) {
     console.error('Fallback clipboard copy failed:', fallbackError);
     return false;
-  }
-};
-
-const getUpdateCheckStatusFromRuntimeStatus = (
-  state: AppUpdateRuntimeState,
-): 'idle' | 'checking' | 'upToDate' | 'error' | 'downloading' | 'ready' => {
-  if (state.source !== AppUpdateSource.Manual) {
-    return 'idle';
-  }
-  switch (state.status) {
-    case AppUpdateStatus.Checking:
-      return 'checking';
-    case AppUpdateStatus.Downloading:
-      return 'downloading';
-    case AppUpdateStatus.Ready:
-      return 'ready';
-    case AppUpdateStatus.Error:
-      return 'error';
-    default:
-      return 'idle';
   }
 };
 
@@ -462,7 +422,7 @@ const SettingsToggleRow: React.FC<{
   </div>
 );
 
-const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, noticeI18nKey, noticeExtra, onUpdateFound, enterpriseConfig }) => {
+const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, noticeI18nKey, noticeExtra, enterpriseConfig }) => {
   const dispatch = useDispatch();
   // 状态
   const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'general');
@@ -540,7 +500,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const contentRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const emailCopiedTimerRef = useRef<number | null>(null);
-  const updateCheckTimerRef = useRef<number | null>(null);
 
   // 快捷键设置
   const [shortcuts, setShortcuts] = useState({
@@ -575,8 +534,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const [testMode, setTestMode] = useState(false);
   const [logoClickCount, setLogoClickCount] = useState(0);
   const [testModeUnlocked, setTestModeUnlocked] = useState(false);
-  const [updateCheckStatus, setUpdateCheckStatus] = useState<'idle' | 'checking' | 'upToDate' | 'error' | 'downloading' | 'ready'>('idle');
-  const [appUpdateState, setAppUpdateState] = useState<AppUpdateRuntimeState | null>(null);
 
   useEffect(() => {
     window.electron.appInfo.getVersion().then(setAppVersion);
@@ -585,43 +542,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   useEffect(() => {
     setShowApiKey(false);
   }, [activeProvider]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const syncUpdateStatus = async () => {
-      try {
-        const state = await window.electron.appUpdate.getState();
-        if (!mounted) {
-          return;
-        }
-        setAppUpdateState(state);
-        setUpdateCheckStatus(getUpdateCheckStatusFromRuntimeStatus(state));
-      } catch (error) {
-        console.error('Failed to load app update state in settings:', error);
-      }
-    };
-
-    void syncUpdateStatus();
-
-    const unsubscribe = window.electron.appUpdate.onStateChanged((state) => {
-      if (
-        updateCheckTimerRef.current != null &&
-        state.source === AppUpdateSource.Manual &&
-        state.status !== AppUpdateStatus.Idle
-      ) {
-        window.clearTimeout(updateCheckTimerRef.current);
-        updateCheckTimerRef.current = null;
-      }
-      setAppUpdateState(state);
-      setUpdateCheckStatus(getUpdateCheckStatusFromRuntimeStatus(state));
-    });
-
-    return () => {
-      mounted = false;
-      unsubscribe();
-    };
-  }, []);
 
   const handleCopyContactEmail = useCallback(async () => {
     const copied = await copyTextToClipboard(ABOUT_CONTACT_EMAIL);
@@ -635,76 +555,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         emailCopiedTimerRef.current = null;
       }, 1200);
     }
-  }, []);
-
-  const authUser = useSelector((state: RootState) => state.auth.user);
-
-  const handleCheckUpdate = useCallback(async () => {
-    if (updateCheckStatus === 'checking' || !appVersion) return;
-    setUpdateCheckStatus('checking');
-    try {
-      const result = await window.electron.appUpdate.checkNow({ manual: true, userId: authUser?.yid });
-      if (!result.success) {
-        throw new Error(result.error || 'Update check failed');
-      }
-
-      if (!result.updateFound) {
-        setUpdateCheckStatus('upToDate');
-        if (updateCheckTimerRef.current != null) {
-          window.clearTimeout(updateCheckTimerRef.current);
-        }
-        updateCheckTimerRef.current = window.setTimeout(() => {
-          setUpdateCheckStatus('idle');
-          updateCheckTimerRef.current = null;
-        }, 3000);
-        return;
-      }
-
-      if (result.state.status === AppUpdateStatus.Ready) {
-        setUpdateCheckStatus('ready');
-      } else if (result.state.status === AppUpdateStatus.Downloading) {
-        setUpdateCheckStatus('downloading');
-      } else {
-        setUpdateCheckStatus('idle');
-      }
-
-      if (result.state.info) {
-        onUpdateFound?.(result.state.info);
-      }
-    } catch {
-      setUpdateCheckStatus('error');
-      if (updateCheckTimerRef.current != null) {
-        window.clearTimeout(updateCheckTimerRef.current);
-      }
-      updateCheckTimerRef.current = window.setTimeout(() => {
-        setUpdateCheckStatus('idle');
-        updateCheckTimerRef.current = null;
-      }, 3000);
-    }
-  }, [appVersion, authUser, updateCheckStatus, onUpdateFound]);
-
-  const updateButtonLabel = useMemo(() => {
-    if (
-      updateCheckStatus === 'downloading' &&
-      appUpdateState?.progress?.percent != null &&
-      Number.isFinite(appUpdateState.progress.percent)
-    ) {
-      return `${i18nService.t('updateDownloadingBackground')} ${Math.round(appUpdateState.progress.percent * 100)}%`;
-    }
-    if (updateCheckStatus === 'checking') return i18nService.t('updateChecking');
-    if (updateCheckStatus === 'downloading') return i18nService.t('updateDownloadingBackground');
-    if (updateCheckStatus === 'ready') return i18nService.t('updateReadyTitle');
-    if (updateCheckStatus === 'upToDate') return i18nService.t('updateUpToDate');
-    if (updateCheckStatus === 'error') return i18nService.t('updateCheckFailed');
-    return i18nService.t('checkForUpdate');
-  }, [appUpdateState?.progress?.percent, updateCheckStatus]);
-
-  const handleOpenUserManual = useCallback(() => {
-    void window.electron.shell.openExternal(ABOUT_USER_MANUAL_URL);
-  }, []);
-
-  const handleOpenUserCommunity = useCallback(() => {
-    void window.electron.shell.openExternal(ABOUT_USER_COMMUNITY_URL);
   }, []);
 
   const handleOpenServiceTerms = useCallback(() => {
@@ -815,9 +665,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   useEffect(() => () => {
     if (emailCopiedTimerRef.current != null) {
       window.clearTimeout(emailCopiedTimerRef.current);
-    }
-    if (updateCheckTimerRef.current != null) {
-      window.clearTimeout(updateCheckTimerRef.current);
     }
   }, []);
 
@@ -2643,7 +2490,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       { key: 'browserWebAccess' as TabType, label: i18nService.t('browserWebAccessTab'), icon: <GlobeAltIcon className="h-5 w-5" /> },
       { key: 'email' as TabType,          label: i18nService.t('emailTab'),       icon: <EnvelopeIcon className="h-5 w-5" /> },
       { key: 'coworkMemory' as TabType,   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
-      { key: 'coworkDreaming' as TabType, label: i18nService.t('coworkMemoryTabDreaming'), icon: <DreamingTabIcon className="h-5 w-5" /> },
       { key: 'plugins' as TabType,        label: i18nService.t('pluginsTab'),     icon: <PlugIcon className="h-5 w-5" /> },
       { key: 'shortcuts' as TabType,      label: i18nService.t('shortcuts'),      icon: <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-5 w-5"><rect x="2" y="4" width="20" height="14" rx="2" /><line x1="6" y1="8" x2="8" y2="8" /><line x1="10" y1="8" x2="12" y2="8" /><line x1="14" y1="8" x2="16" y2="8" /><line x1="6" y1="12" x2="8" y2="12" /><line x1="10" y1="12" x2="14" y2="12" /><line x1="16" y1="12" x2="18" y2="12" /><line x1="8" y1="15.5" x2="16" y2="15.5" /></svg> },
       { key: 'about' as TabType,          label: i18nService.t('about'),          icon: <InformationCircleIcon className="h-5 w-5" /> },
@@ -3271,27 +3117,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <span className="text-sm text-secondary">{appVersion}</span>
-                  {!enterpriseConfig?.disableUpdate && (
-                  <button
-                    type="button"
-                    disabled={updateCheckStatus === 'checking' || updateCheckStatus === 'downloading'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleCheckUpdate();
-                    }}
-                    className="text-xs px-2 py-0.5 rounded-md border border-border text-secondary hover:text-primary dark:hover:text-primary hover:border-primary dark:hover:border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {updateButtonLabel}
-                  </button>
-                  )}
-                  {enterpriseConfig?.disableUpdate && (
-                  <span className="text-xs text-claude-textSecondary dark:text-claude-darkTextSecondary">
-                    {i18nService.t('settings.enterprise.managed')}
-                  </span>
-                  )}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
+              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutContactEmail')}</span>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <button
@@ -3311,32 +3139,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                     </span>
                   )}
                 </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserManual();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_MANUAL_URL}
-                </button>
-              </div>
-              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserCommunity')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserCommunity();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_COMMUNITY_URL}
-                </button>
               </div>
               {testModeUnlocked && (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">

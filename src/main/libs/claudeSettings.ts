@@ -212,17 +212,16 @@ function shouldUseOpenAICodexOAuth(providerName: string, providerConfig: LocalPr
 }
 
 function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
-  const tokens = authTokensGetter?.();
-  const serverBaseUrl = serverBaseUrlGetter?.();
-  if (!tokens?.accessToken || !serverBaseUrl) return null;
+  const tokenProxyPort = getOpenClawTokenProxyPort();
+  if (!tokenProxyPort) return null;
   const effectiveModelId = modelId?.trim() || '';
   if (!effectiveModelId) return null;
-  const baseURL = `${serverBaseUrl}/api/proxy/v1`;
+  const baseURL = `http://127.0.0.1:${tokenProxyPort}/v1`;
   const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
   console.debug('[ClaudeSettings] lobsterai-server provider resolved:', { baseURL, modelId: effectiveModelId, supportsImage: cachedMeta?.supportsImage });
   return {
     providerName: ProviderName.LobsteraiServer,
-    providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: 'openai', models: buildServerFallbackModels(effectiveModelId) },
+    providerConfig: { enabled: true, apiKey: 'proxy-managed', baseUrl: baseURL, apiFormat: 'openai', models: buildServerFallbackModels(effectiveModelId) },
     modelId: effectiveModelId,
     apiFormat: 'openai',
     baseURL,

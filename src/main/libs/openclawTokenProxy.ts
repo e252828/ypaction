@@ -1,5 +1,5 @@
-import http from 'http';
 import { net } from 'electron';
+import http from 'http';
 
 const PROXY_BIND_HOST = '127.0.0.1';
 
@@ -10,17 +10,30 @@ let proxyPort: number | null = null;
 let tokenGetter: (() => { accessToken: string; refreshToken: string } | null) | null = null;
 let tokenRefresher: ((reason: string) => Promise<string | null>) | null = null;
 let serverBaseUrlGetter: (() => string) | null = null;
+let dynamicForwarder: ((request: {
+  url: string;
+  method: string;
+  body: Buffer;
+  headers: http.IncomingHttpHeaders;
+}) => Promise<Response>) | null = null;
 
 export type OpenClawTokenProxyConfig = {
-  getAuthTokens: () => { accessToken: string; refreshToken: string } | null;
-  refreshToken: (reason: string) => Promise<string | null>;
-  getServerBaseUrl: () => string;
+  getAuthTokens?: () => { accessToken: string; refreshToken: string } | null;
+  refreshToken?: (reason: string) => Promise<string | null>;
+  getServerBaseUrl?: () => string;
+  forwardRequest?: (request: {
+    url: string;
+    method: string;
+    body: Buffer;
+    headers: http.IncomingHttpHeaders;
+  }) => Promise<Response>;
 };
 
 export function startOpenClawTokenProxy(config: OpenClawTokenProxyConfig): Promise<{ port: number }> {
-  tokenGetter = config.getAuthTokens;
-  tokenRefresher = config.refreshToken;
-  serverBaseUrlGetter = config.getServerBaseUrl;
+  tokenGetter = config.getAuthTokens ?? null;
+  tokenRefresher = config.refreshToken ?? null;
+  serverBaseUrlGetter = config.getServerBaseUrl ?? null;
+  dynamicForwarder = config.forwardRequest ?? null;
 
   return new Promise((resolve, reject) => {
     if (proxyServer) {
@@ -59,6 +72,7 @@ export function stopOpenClawTokenProxy(): void {
     proxyServer.close();
     proxyServer = null;
     proxyPort = null;
+    dynamicForwarder = null;
     console.log('[OpenClawTokenProxy] stopped');
   }
 }
@@ -78,6 +92,21 @@ function collectRequestBody(req: http.IncomingMessage): Promise<Buffer> {
 
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
+    const body = await collectRequestBody(req);
+    const requestUrl = req.url || '/';
+    const requestMethod = req.method || 'POST';
+
+    if (dynamicForwarder) {
+      const response = await dynamicForwarder({
+        url: requestUrl,
+        method: requestMethod,
+        body,
+        headers: req.headers,
+      });
+      pipeFetchResponse(response, res);
+      return;
+    }
+
     const tokens = tokenGetter?.();
     const serverBaseUrl = serverBaseUrlGetter?.();
 
@@ -87,20 +116,18 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
-    const body = await collectRequestBody(req);
-
     // Build upstream URL: serverBaseUrl + request path
     // OpenClaw sends to /v1/chat/completions, upstream is /api/proxy/v1/chat/completions
-    const upstreamPath = `/api/proxy${req.url || '/'}`;
+    const upstreamPath = `/api/proxy${requestUrl}`;
     const upstreamUrl = `${serverBaseUrl}${upstreamPath}`;
 
-    const result = await forwardRequest(upstreamUrl, req.method || 'POST', tokens.accessToken, body, req.headers);
+    const result = await forwardRequest(upstreamUrl, requestMethod, tokens.accessToken, body, req.headers);
 
     if ((result.status === 401 || result.status === 403) && tokenRefresher) {
       console.log(`[OpenClawTokenProxy] received ${result.status}, attempting token refresh`);
       const newToken = await tokenRefresher('openclaw-proxy');
       if (newToken) {
-        const retryResult = await forwardRequest(upstreamUrl, req.method || 'POST', newToken, body, req.headers);
+        const retryResult = await forwardRequest(upstreamUrl, requestMethod, newToken, body, req.headers);
         pipeResponse(retryResult, res);
         return;
       }
@@ -114,6 +141,35 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       res.end(JSON.stringify({ error: 'Token proxy upstream error' }));
     }
   }
+}
+
+function pipeFetchResponse(response: Response, res: http.ServerResponse): void {
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  res.writeHead(response.status, headers);
+
+  if (!response.body) {
+    res.end();
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const pump = (): void => {
+    reader.read().then(({ done, value }) => {
+      if (done) {
+        res.end();
+        return;
+      }
+      res.write(value);
+      pump();
+    }).catch((err) => {
+      console.error('[OpenClawTokenProxy] dynamic stream read error:', err);
+      res.end();
+    });
+  };
+  pump();
 }
 
 type UpstreamResult = {

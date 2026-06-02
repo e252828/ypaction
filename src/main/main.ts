@@ -34,6 +34,7 @@ import {
 import { AgentId, AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
+import { AIHubAuth, AIHubAuthStoreKey } from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
   BrowserDiagnosticStatus,
@@ -75,7 +76,7 @@ import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../sh
 import { ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME } from './appConstants';
-import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
+import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState } from './authQuota';
 import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
 import { setLanguage, t } from './i18n';
@@ -115,7 +116,24 @@ import {
   OpenClawRuntimeAdapter,
   type PermissionResult,
 } from './libs/agentEngine';
-import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
+import {
+  type AIHubLLMConfig,
+  type AIHubQuota,
+  type AIHubTokenSet,
+  buildAIHubAuthorizeUrl,
+  buildAIHubRuntimeConfig,
+  buildAIHubUpstreamUrl,
+  createAIHubState,
+  exchangeAIHubAuthCode,
+  fetchAIHubLLMConfig,
+  fetchAIHubUserInfo,
+  normalizeAIHubModels,
+  normalizeAIHubQuota,
+  refreshAIHubToken,
+  selectAIHubTokenForModel,
+  validateAIHubCallbackState,
+} from './libs/aihubAuth';
+import { AppUpdateCoordinator } from './libs/appUpdateCoordinator';
 import {
   clearServerModelMetadata,
   getAllServerModelMetadata,
@@ -169,7 +187,7 @@ import {
 } from './libs/htmlPreviewServer';
 import { getHtmlShareBySource, updateHtmlShare, uploadHtmlShare } from './libs/htmlShare/htmlShareClient';
 import { packageHtmlFile } from './libs/htmlShare/htmlSharePackager';
-import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
+import { initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer, type MediaGenerationRequest, type MediaGenerationResponse } from './libs/mcpBridgeServer';
 import { type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
@@ -211,7 +229,6 @@ import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { resolveStdioCommand } from './libs/resolveStdioCommand';
 import { serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
-import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -2653,8 +2670,8 @@ if (!gotTheLock) {
     app.setAsDefaultProtocolClient('ypaction');
   }
 
-  // Buffer for deep link auth code received before renderer is ready
-  let pendingAuthCode: string | null = null;
+  // Buffer for deep link auth callback received before renderer is ready
+  let pendingAuthCallback: { code: string; state?: string | null } | null = null;
   let authCallbackListenerReady = false;
 
   /**
@@ -2665,11 +2682,12 @@ if (!gotTheLock) {
       const parsed = new URL(url);
       if (parsed.hostname === 'auth' && parsed.pathname === '/callback') {
         const code = parsed.searchParams.get('code');
+        const state = parsed.searchParams.get('state');
         if (code) {
           if (authCallbackListenerReady && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('auth:callback', { code });
+            mainWindow.webContents.send('auth:callback', { code, state });
           } else {
-            pendingAuthCode = code;
+            pendingAuthCallback = { code, state };
           }
         }
       }
@@ -2686,9 +2704,9 @@ if (!gotTheLock) {
   // Allow renderer to retrieve a buffered auth code on init
   ipcMain.handle('auth:getPendingCallback', () => {
     authCallbackListenerReady = true;
-    const code = pendingAuthCode;
-    pendingAuthCode = null;
-    return code;
+    const callback = pendingAuthCallback;
+    pendingAuthCallback = null;
+    return callback;
   });
 
   // macOS: handle open-url event for deep links
@@ -2942,95 +2960,43 @@ if (!gotTheLock) {
   /**
    * Helper: Persist auth tokens into the kv store.
    */
-  const saveAuthTokens = (accessToken: string, refreshToken: string) => {
-    getStore().set('auth_tokens', { accessToken, refreshToken });
+  const fetchAIHub = (url: string, options?: RequestInit): Promise<Response> =>
+    net.fetch(url, options) as Promise<Response>;
+
+  const getAIHubConfig = () => buildAIHubRuntimeConfig(isTestModeEnabled());
+
+  const saveAuthTokens = (tokens: AIHubTokenSet) => {
+    getStore().set(AIHubAuthStoreKey.Tokens, tokens);
   };
 
-  const getAuthTokens = (): { accessToken: string; refreshToken: string } | null => {
-    return getStore().get<{ accessToken: string; refreshToken: string }>('auth_tokens') || null;
+  const getAuthTokens = (): AIHubTokenSet | null => {
+    const tokens = getStore().get<AIHubTokenSet>(AIHubAuthStoreKey.Tokens)
+      || getStore().get<AIHubTokenSet>('auth_tokens')
+      || null;
+    return tokens?.accessToken ? tokens : null;
   };
 
   const clearAuthTokens = () => {
+    getStore().delete(AIHubAuthStoreKey.Tokens);
     getStore().delete('auth_tokens');
   };
 
   const saveAuthUser = (user: Record<string, unknown>) => {
     try {
       getStore().set(AUTH_USER_STORE_KEY, user);
+      getStore().set(AIHubAuthStoreKey.User, user);
     } catch (error) {
       console.warn('[Auth] failed to save auth user for attribution:', error);
     }
   };
 
-  const getAuthUserId = (): string | null => {
-    try {
-      const user = getStore().get<Record<string, unknown>>(AUTH_USER_STORE_KEY);
-      const yid = user?.yid;
-      if (typeof yid === 'string' && yid.trim()) return yid;
-      const userId = user?.userId;
-      if (typeof userId === 'string' && userId.trim()) return userId;
-    } catch (error) {
-      console.warn('[Auth] failed to read auth user for attribution:', error);
-    }
-    return null;
-  };
-
   const clearAuthUser = () => {
     try {
       getStore().delete(AUTH_USER_STORE_KEY);
+      getStore().delete(AIHubAuthStoreKey.User);
     } catch (error) {
       console.warn('[Auth] failed to clear auth user for attribution:', error);
     }
-  };
-
-  const getOrCreateInstallationId = (): string | null => {
-    try {
-      const existing = getStore().get<string>(INSTALLATION_UUID_KEY);
-      if (typeof existing === 'string' && existing.trim()) {
-        return existing;
-      }
-      const nextId = crypto.randomUUID();
-      getStore().set(INSTALLATION_UUID_KEY, nextId);
-      return nextId;
-    } catch (error) {
-      console.warn('[Auth] failed to get installation uuid:', error);
-      return null;
-    }
-  };
-
-  const buildKeyfromPayload = (): {
-    firstKeyfrom: string;
-    latestKeyfrom: string;
-    uuid?: string;
-    userId?: string;
-    version: string;
-  } => {
-    const { firstKeyfrom, latestKeyfrom } = getKeyfromAttribution(getStore());
-    const uuid = getOrCreateInstallationId();
-    const userId = getAuthUserId();
-    return {
-      firstKeyfrom,
-      latestKeyfrom,
-      ...(uuid ? { uuid } : {}),
-      ...(userId ? { userId } : {}),
-      version: app.getVersion(),
-    };
-  };
-
-  const withKeyfromBody = <T extends Record<string, unknown>>(body: T) => ({
-    ...body,
-    ...buildKeyfromPayload(),
-  });
-
-  const appendKeyfromQuery = (url: string): string => {
-    const parsed = new URL(url);
-    const payload = buildKeyfromPayload();
-    for (const [key, value] of Object.entries(payload)) {
-      if (value) {
-        parsed.searchParams.set(key, String(value));
-      }
-    }
-    return parsed.toString();
   };
 
   // refreshOnce() is the single entry-point for all token refresh paths
@@ -3046,29 +3012,15 @@ if (!gotTheLock) {
       try {
         const tokens = getAuthTokens();
         if (!tokens?.refreshToken) return null;
-        const serverBaseUrl = getServerApiBaseUrl();
-        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
-        console.log(`[Auth] requesting token refresh (reason: ${reason}) at ${refreshUrl}`);
-        const resp = await net.fetch(refreshUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
+        const refreshed = await refreshAIHubToken(getAIHubConfig(), tokens.refreshToken, fetchAIHub);
+        saveAuthTokens(refreshed);
+        console.log(`[Auth] AIHub token refresh succeeded (reason: ${reason})`);
+        resolvedToken = refreshed.accessToken;
+        syncOpenClawConfig({ reason: `aihub-token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
+          console.warn('[Auth] post-refresh OpenClaw config sync failed:', err);
         });
-        if (resp.ok) {
-          const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-            console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
-            resolvedToken = body.data.accessToken;
-            // Token proxy handles fresh tokens dynamically — no need
-            // to restart the gateway on token refresh.
-            syncOpenClawConfig({ reason: `token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
-              console.warn('[Auth] post-refresh OpenClaw config sync failed:', err);
-            });
-          }
-        }
       } catch (err) {
-        console.warn(`[Auth] token refresh failed (reason: ${reason}):`, err);
+        console.warn(`[Auth] AIHub token refresh failed (reason: ${reason}):`, err);
       } finally {
         pendingTokenRefresh = null;
       }
@@ -3103,6 +3055,87 @@ if (!gotTheLock) {
     }
 
     return resp;
+  };
+
+  let cachedAIHubLLMConfig: { value: AIHubLLMConfig; expiresAt: number } | null = null;
+
+  const clearAIHubLLMConfigCache = () => {
+    cachedAIHubLLMConfig = null;
+  };
+
+  const getAIHubLLMConfigCached = async (options: { forceRefresh?: boolean } = {}): Promise<AIHubLLMConfig> => {
+    const now = Date.now();
+    if (!options.forceRefresh && cachedAIHubLLMConfig && cachedAIHubLLMConfig.expiresAt > now) {
+      return cachedAIHubLLMConfig.value;
+    }
+    const tokens = getAuthTokens();
+    if (!tokens?.accessToken) {
+      throw new Error('No AIHub auth tokens are available.');
+    }
+    const config = await fetchAIHubLLMConfig(getAIHubConfig(), tokens.accessToken, fetchAIHub);
+    cachedAIHubLLMConfig = {
+      value: config,
+      expiresAt: now + AIHubAuth.LlmConfigCacheTtlMs,
+    };
+    return config;
+  };
+
+  const createAIHubProxyError = (status: number, message: string): Response =>
+    new Response(JSON.stringify({ error: { message } }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  const extractAIHubProxyModel = (body: Buffer): string => {
+    try {
+      const parsed = JSON.parse(body.toString('utf8')) as { model?: unknown };
+      return typeof parsed.model === 'string' ? parsed.model.trim() : '';
+    } catch {
+      return '';
+    }
+  };
+
+  const forwardAIHubModelProxyRequest = async (request: {
+    url: string;
+    method: string;
+    body: Buffer;
+    headers: NodeJS.Dict<string | string[]>;
+  }): Promise<Response> => {
+    const model = extractAIHubProxyModel(request.body);
+    if (!model) {
+      return createAIHubProxyError(400, 'Model is required for AIHub proxy requests.');
+    }
+
+    const send = async (forceRefresh: boolean): Promise<Response> => {
+      const llmConfig = await getAIHubLLMConfigCached({ forceRefresh });
+      const token = selectAIHubTokenForModel(llmConfig, model);
+      if (!token) {
+        return createAIHubProxyError(403, `Model ${model} is not available for this AIHub user.`);
+      }
+      const upstreamUrl = buildAIHubUpstreamUrl(token.baseURL, request.url);
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token.apiKey}`,
+        'Content-Type': typeof request.headers['content-type'] === 'string'
+          ? request.headers['content-type']
+          : 'application/json',
+      };
+      const accept = request.headers.accept;
+      if (typeof accept === 'string') {
+        headers.Accept = accept;
+      }
+      return net.fetch(upstreamUrl, {
+        method: request.method,
+        headers,
+        body: request.body.length > 0 ? new Uint8Array(request.body) : undefined,
+      }) as Promise<Response>;
+    };
+
+    let response = await send(false);
+    if (response.status === 401 || response.status === 403) {
+      clearAIHubLLMConfigCache();
+      response = await send(true);
+    }
+    return response;
   };
 
   const extractSessionIdFromKey = (sessionKey: string): string | null =>
@@ -3943,22 +3976,19 @@ if (!gotTheLock) {
   /**
    * Normalize quota data from various server response formats into a unified shape.
    */
-  const normalizeQuota = (raw: Record<string, unknown>) => {
-    const quota = normalizeAuthQuota(raw, {
-      freePlanName: t('authPlanFree'),
-      standardPlanName: t('authPlanStandard'),
-      fallbackSubscriptionStatus: cachedSubscriptionStatus,
-    });
+  const normalizeQuota = (raw: AIHubQuota | undefined) => {
+    const quota = normalizeAIHubQuota(raw);
     const quotaGateState = authQuotaGateStateFromQuota(quota);
     cachedSubscriptionStatus = quotaGateState.subscriptionStatus;
     cachedMediaGenerationEntitled = quotaGateState.mediaGenerationEntitled;
     return quota;
   };
 
-  ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
+  ipcMain.handle('auth:login', async () => {
     try {
-      const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
-      const finalUrl = `${baseUrl}?source=electron`;
+      const authState = createAIHubState();
+      getStore().set(AIHubAuthStoreKey.State, authState);
+      const finalUrl = buildAIHubAuthorizeUrl(getAIHubConfig(), authState);
       await shell.openExternal(finalUrl);
       return { success: true };
     } catch (error) {
@@ -3970,42 +4000,27 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
+  ipcMain.handle('auth:exchange', async (_event, { code, state }: { code: string; state?: string | null }) => {
     try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
-      console.log(`[Auth] requesting auth exchange at ${exchangeUrl}`);
-      const resp = await net.fetch(exchangeUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(withKeyfromBody({ authCode: code })),
-      });
-      if (!resp.ok) {
-        return { success: false, error: `Exchange failed: ${resp.status}` };
+      const expectedState = getStore().get<string>(AIHubAuthStoreKey.State) || null;
+      getStore().delete(AIHubAuthStoreKey.State);
+      if (!validateAIHubCallbackState(expectedState, state ?? null)) {
+        return { success: false, error: 'Invalid AIHub auth callback state.' };
       }
-      const body = (await resp.json()) as {
-        code: number;
-        message?: string;
-        data: {
-          accessToken: string;
-          refreshToken: string;
-          user: Record<string, unknown>;
-          quota: Record<string, unknown>;
-        };
-      };
-      if (body.code !== 0 || !body.data) {
-        return { success: false, error: body.message || 'Exchange failed' };
-      }
-      saveAuthTokens(body.data.accessToken, body.data.refreshToken);
-      saveAuthUser(body.data.user);
-      console.log('[Auth] exchange user data:', JSON.stringify(body.data.user));
+      const tokens = await exchangeAIHubAuthCode(getAIHubConfig(), code, fetchAIHub);
+      saveAuthTokens(tokens);
+      clearAIHubLLMConfigCache();
+      const user = await fetchAIHubUserInfo(getAIHubConfig(), tokens.accessToken, fetchAIHub);
+      saveAuthUser(user);
       const previousQuotaGateState = getAuthQuotaGateState();
-      const quota = normalizeQuota(body.data.quota);
+      const llmConfig = await getAIHubLLMConfigCached({ forceRefresh: true });
+      const quota = normalizeQuota(llmConfig.quota);
+      updateServerModelMetadata(normalizeAIHubModels(llmConfig));
       syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      return { success: true, user: body.data.user, quota };
+      return { success: true, user, quota };
     } catch (error) {
-      console.error('[Auth] exchange failed:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Exchange failed' };
+      console.error('[Auth] AIHub exchange failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : 'AIHub exchange failed' };
     }
   });
 
@@ -4013,33 +4028,17 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      // Fetch user profile
-      const profileResp = await fetchWithAuth(`${serverBaseUrl}/api/user/profile`);
-      if (!profileResp.ok) return { success: false };
-      const profileBody = (await profileResp.json()) as {
-        code: number;
-        data: Record<string, unknown>;
-      };
-      if (profileBody.code !== 0 || !profileBody.data) return { success: false };
-      saveAuthUser(profileBody.data);
-      // Fetch quota separately
-      const quotaResp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      let quota = null;
-      if (quotaResp.ok) {
-        const quotaBody = (await quotaResp.json()) as {
-          code: number;
-          data: Record<string, unknown>;
-        };
-        if (quotaBody.code === 0 && quotaBody.data) {
-          const previousQuotaGateState = getAuthQuotaGateState();
-          quota = normalizeQuota(quotaBody.data);
-          syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-        }
-      }
-      console.log('[Auth] getUser profile data:', JSON.stringify(profileBody.data));
-      return { success: true, user: profileBody.data, quota };
-    } catch {
+      const user = await fetchAIHubUserInfo(getAIHubConfig(), tokens.accessToken, fetchAIHub);
+      saveAuthUser(user);
+      const previousQuotaGateState = getAuthQuotaGateState();
+      const llmConfig = await getAIHubLLMConfigCached();
+      const quota = normalizeQuota(llmConfig.quota);
+      updateServerModelMetadata(normalizeAIHubModels(llmConfig));
+      syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
+      console.log('[Auth] AIHub user profile refreshed');
+      return { success: true, user, quota };
+    } catch (error) {
+      console.warn('[Auth] AIHub getUser failed:', error);
       return { success: false };
     }
   });
@@ -4048,16 +4047,13 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
       const previousQuotaGateState = getAuthQuotaGateState();
-      const quota = normalizeQuota(body.data);
+      const llmConfig = await getAIHubLLMConfigCached({ forceRefresh: true });
+      const quota = normalizeQuota(llmConfig.quota);
       syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
       return { success: true, quota };
-    } catch {
+    } catch (error) {
+      console.warn('[Auth] AIHub quota refresh failed:', error);
       return { success: false };
     }
   });
@@ -4066,41 +4062,36 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
-      const profileSummaryUrl = appendKeyfromQuery(`${serverBaseUrl}/api/user/profile-summary`);
-      console.log(`[Auth] requesting profile summary at ${profileSummaryUrl}`);
-      const resp = await fetchWithAuth(profileSummaryUrl);
-      if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
-      return { success: true, data: body.data };
-    } catch {
+      const llmConfig = await getAIHubLLMConfigCached();
+      const quota = normalizeQuota(llmConfig.quota);
+      const user = getStore().get<Record<string, unknown>>(AUTH_USER_STORE_KEY);
+      const numericId = Number(user?.openidId ?? 0);
+      const nickname = typeof user?.nickname === 'string'
+        ? user.nickname
+        : typeof user?.name === 'string'
+          ? user.name
+          : '';
+      return {
+        success: true,
+        data: {
+          id: Number.isFinite(numericId) ? numericId : 0,
+          nickname,
+          avatarUrl: null,
+          totalCreditsRemaining: quota.monthRemainingQuota ?? quota.remainingAmount ?? 0,
+          creditItems: [],
+        },
+      };
+    } catch (error) {
+      console.warn('[Auth] AIHub profile summary failed:', error);
       return { success: false };
     }
   });
 
   ipcMain.handle('auth:logout', async () => {
     try {
-      const tokens = getAuthTokens();
-      if (tokens) {
-        const serverBaseUrl = getServerApiBaseUrl();
-        const logoutUrl = `${serverBaseUrl}/api/auth/logout`;
-        console.log(`[Auth] requesting logout at ${logoutUrl}`);
-        await net
-          .fetch(logoutUrl, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${tokens.accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(withKeyfromBody({})),
-          })
-          .catch(() => {
-            /* best-effort */
-          });
-      }
       clearAuthTokens();
       clearAuthUser();
+      clearAIHubLLMConfigCache();
       clearServerModelMetadata();
       const previousQuotaGateState = getAuthQuotaGateState();
       resetAuthQuotaGateState();
@@ -4110,6 +4101,7 @@ if (!gotTheLock) {
       const previousQuotaGateState = getAuthQuotaGateState();
       clearAuthTokens();
       clearAuthUser();
+      clearAIHubLLMConfigCache();
       clearServerModelMetadata();
       resetAuthQuotaGateState();
       syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
@@ -4120,15 +4112,14 @@ if (!gotTheLock) {
   ipcMain.handle('auth:refreshToken', async () => {
     try {
       const accessToken = await refreshOnce('manual');
-      return accessToken ? { success: true, accessToken } : { success: false };
+      return accessToken ? { success: true } : { success: false };
     } catch {
       return { success: false };
     }
   });
 
   ipcMain.handle('auth:getAccessToken', async () => {
-    const tokens = getAuthTokens();
-    return tokens?.accessToken || null;
+    return null;
   });
 
   ipcMain.handle('auth:getModels', async () => {
@@ -4138,33 +4129,10 @@ if (!gotTheLock) {
         console.log('[Auth:getModels] No auth tokens available');
         return { success: false };
       }
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
-      console.log(`[Auth:getModels] requesting available models at ${url}`);
-      const resp = await fetchWithAuth(url);
-      console.log('[Auth:getModels] Response status:', resp.status);
-      if (!resp.ok) {
-        console.log('[Auth:getModels] Response not ok:', resp.status, resp.statusText);
-        return { success: false };
-      }
-      const data = (await resp.json()) as {
-        code: number;
-        data: Array<{
-          modelId: string;
-          modelName: string;
-          provider: string;
-          apiFormat: string;
-          supportsImage?: boolean;
-          supportsThinking?: boolean;
-          contextWindow?: number;
-          costMultiplier?: number;
-          description?: string;
-        }>;
-      };
-      console.log('[Auth:getModels] Response data:', JSON.stringify(data).slice(0, 500));
-      if (data.code !== 0) return { success: false };
-      // Cache server model metadata for use in OpenClaw config sync (supportsImage, etc.)
-      const serverModelsChanged = updateServerModelMetadata(data.data);
+      const llmConfig = await getAIHubLLMConfigCached({ forceRefresh: true });
+      const models = normalizeAIHubModels(llmConfig);
+      console.log(`[Auth:getModels] AIHub returned ${models.length} available models`);
+      const serverModelsChanged = updateServerModelMetadata(models);
       // Re-sync so the gateway picks up the correct supportsImage values for server models.
       // This IPC can run after normal chat completion when the renderer refreshes quota/model
       // state, so server model updates must not force a hard gateway restart.
@@ -4176,9 +4144,9 @@ if (!gotTheLock) {
       } else {
         console.debug('[Auth:getModels] server model metadata unchanged, skipping config sync');
       }
-      return { success: true, models: data.data };
+      return { success: true, models };
     } catch (e) {
-      console.error('[Auth:getModels] Error:', e);
+      console.error('[Auth:getModels] AIHub model fetch failed:', e);
       return { success: false };
     }
   });
@@ -9041,30 +9009,13 @@ end tell'`,
     }
 
     registerProxyTokenRefresher('lobsterai-server', async () => {
-      const tokens = getAuthTokens();
-      if (!tokens?.refreshToken) return null;
-      const serverBaseUrl = getServerApiBaseUrl();
       try {
-        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
-        console.log(`[Auth] requesting proxy token refresh at ${refreshUrl}`);
-        const resp = await net.fetch(refreshUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
-        });
-        if (resp.ok) {
-          const body = (await resp.json()) as {
-            code: number;
-            data: { accessToken: string; refreshToken?: string };
-          };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
-            console.log('[Auth] proxy token refresh succeeded');
-            return body.data.accessToken;
-          }
-        }
+        clearAIHubLLMConfigCache();
+        await refreshOnce('cowork-proxy');
+        await getAIHubLLMConfigCached({ forceRefresh: true });
+        return 'proxy-managed';
       } catch (err) {
-        console.warn('[Auth] proxy token refresh failed:', err);
+        console.warn('[Auth] AIHub proxy refresh failed:', err);
       }
       return null;
     });
@@ -9085,13 +9036,11 @@ end tell'`,
     profiler.mark('openClawTokenProxy');
     try {
       await startOpenClawTokenProxy({
-        getAuthTokens,
-        refreshToken: refreshOnce,
-        getServerBaseUrl: getServerApiBaseUrl,
+        forwardRequest: forwardAIHubModelProxyRequest,
       });
-      console.log('[Main] OpenClaw token proxy started');
+      console.log('[Main] OpenClaw AIHub model proxy started');
     } catch (err) {
-      console.warn('[Main] OpenClaw token proxy failed to start (non-fatal):', err);
+      console.warn('[Main] OpenClaw AIHub model proxy failed to start (non-fatal):', err);
     }
     profiler.measure('openClawTokenProxy');
 
@@ -9214,15 +9163,14 @@ end tell'`,
     // see real server data instead of empty defaults ──
     if (getAuthTokens()) {
       profiler.mark('startupCacheWarmup');
-      const warmupResult = await runStartupCacheWarmup({
-        serverBaseUrl: getServerApiBaseUrl(),
-        fetchWithAuth,
-        appendKeyfromQuery,
-        cachedSubscriptionStatus,
-        t,
-      });
-      cachedSubscriptionStatus = warmupResult.subscriptionStatus;
-      cachedMediaGenerationEntitled = warmupResult.mediaGenerationEntitled;
+      try {
+        const llmConfig = await getAIHubLLMConfigCached({ forceRefresh: true });
+        normalizeQuota(llmConfig.quota);
+        updateServerModelMetadata(normalizeAIHubModels(llmConfig));
+        console.log('[Main] startup cache warmup loaded AIHub quota and models');
+      } catch (error) {
+        console.debug('[Main] startup cache warmup: AIHub llm-config fetch failed (non-fatal):', error);
+      }
       profiler.measure('startupCacheWarmup');
     }
 
@@ -9379,8 +9327,9 @@ end tell'`,
         const parsed = new URL(coldStartDeepLink);
         if (parsed.hostname === 'auth' && parsed.pathname === '/callback') {
           const code = parsed.searchParams.get('code');
+          const state = parsed.searchParams.get('state');
           if (code) {
-            pendingAuthCode = code;
+            pendingAuthCallback = { code, state };
           }
         }
       } catch (e) {

@@ -36,15 +36,19 @@ class AuthService {
     store.dispatch(setAuthLoading(true));
 
     // Listen for OAuth callback from protocol handler
-    this.unsubCallback = window.electron.auth.onCallback(async ({ code }) => {
-      await this.handleCallback(code);
+    this.unsubCallback = window.electron.auth.onCallback(async ({ code, state }) => {
+      await this.handleCallback(code, state);
     });
 
     try {
-      const pendingCode = await window.electron.auth.getPendingCallback();
+      const pendingCallback = await window.electron.auth.getPendingCallback();
       let handledPendingCode = false;
-      if (pendingCode) {
-        handledPendingCode = await this.handleCallback(pendingCode);
+      if (pendingCallback) {
+        if (typeof pendingCallback === 'string') {
+          handledPendingCode = await this.handleCallback(pendingCallback);
+        } else {
+          handledPendingCode = await this.handleCallback(pendingCallback.code, pendingCallback.state);
+        }
       }
       if (!handledPendingCode) {
         await this.refreshAuthState({ clearOnFailure: true });
@@ -77,42 +81,15 @@ class AuthService {
    * Initiate login (opens system browser).
    */
   async login() {
-    const loginUrl = await this.fetchLoginUrl();
-    await window.electron.auth.login(loginUrl);
-  }
-
-  /**
-   * Fetch login URL from overmind, fallback to Portal login page.
-   */
-  private async fetchLoginUrl(): Promise<string> {
-    const { getLoginOvermindUrl } = await import('./endpoints');
-    const url = getLoginOvermindUrl();
-    try {
-      const response = await window.electron.api.fetch({
-        url,
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      if (response.ok && typeof response.data === 'object' && response.data !== null) {
-        const value = (response.data as any)?.data?.value;
-        if (typeof value === 'string' && value.trim()) {
-          return value.trim();
-        }
-      }
-    } catch (e) {
-      console.error('[Auth] Failed to fetch login URL from overmind:', e);
-    }
-    // Fallback: use Portal login page directly
-    const { getPortalLoginUrl } = await import('./endpoints');
-    return getPortalLoginUrl();
+    await window.electron.auth.login();
   }
 
   /**
    * Handle OAuth callback with auth code.
    */
-  async handleCallback(code: string): Promise<boolean> {
+  async handleCallback(code: string, state?: string | null): Promise<boolean> {
     try {
-      const result = await window.electron.auth.exchange(code);
+      const result = await window.electron.auth.exchange(code, state);
       if (result.success) {
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels();
@@ -195,12 +172,8 @@ class AuthService {
   /**
    * Get current access token (for proxy API calls).
    */
-  async getAccessToken(): Promise<string | null> {
-    try {
-      return await window.electron.auth.getAccessToken();
-    } catch {
-      return null;
-    }
+  async getAccessToken(): Promise<null> {
+    return null;
   }
 
   destroy() {

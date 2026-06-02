@@ -1,19 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import inviteCreditsIconUrl from '../assets/icons/invite-credits.svg';
 import logoutIconUrl from '../assets/icons/logout.svg';
-import rechargeIconUrl from '../assets/icons/recharge.svg';
-import usageOverviewIconUrl from '../assets/icons/usage-overview.svg';
 import { authService } from '../services/auth';
-import {
-  getPortalInvitationUrl,
-  getPortalProfileUrl,
-  getPortalRechargeUrl,
-} from '../services/endpoints';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
-import type { CreditItem } from '../store/slices/authSlice';
+import type { CreditItem, UserQuota } from '../store/slices/authSlice';
 import UserAvatarIcon from './icons/UserAvatarIcon';
 
 const getSubscriptionBadge = (label: string) => {
@@ -72,6 +64,31 @@ const formatCredits = (n: number): string => {
   return n.toFixed(2);
 };
 
+const formatNumber = (n: number | null | undefined): string => (
+  typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString() : '--'
+);
+
+const formatQuotaCurrency = (value: number | null | undefined, currency?: string): string => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--';
+  if ((currency || 'USD').toUpperCase() === 'USD') {
+    return `$${value.toLocaleString(undefined, {
+      minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  return `${value.toLocaleString(undefined, {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })} ${currency || ''}`.trim();
+};
+
+const formatMonthlyQuota = (quota: UserQuota): string => {
+  if (quota.monthlyQuotaUnlimited) {
+    return i18nService.t('authQuotaUnlimited');
+  }
+  return formatQuotaCurrency(quota.monthlyQuota, quota.quotaCurrency);
+};
+
 const CreditItemRow: React.FC<{ item: CreditItem; isEn: boolean }> = ({ item, isEn }) => {
   const label = isEn ? item.labelEn : item.label;
   const badge = item.type === 'subscription' ? getSubscriptionBadge(label) : null;
@@ -104,6 +121,27 @@ const CreditItemRow: React.FC<{ item: CreditItem; isEn: boolean }> = ({ item, is
     </div>
   );
 };
+
+const AIHubQuotaRows: React.FC<{ quota: UserQuota }> = ({ quota }) => (
+  <div className="border-b border-border px-4 py-2.5 space-y-1.5">
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="text-secondary">{i18nService.t('authMonthRemainingQuota')}</span>
+      <span className="font-medium text-foreground">{formatQuotaCurrency(quota.monthRemainingQuota, quota.quotaCurrency)}</span>
+    </div>
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="text-secondary">{i18nService.t('authMonthUsedTokens')}</span>
+      <span className="font-medium text-foreground">{formatNumber(quota.monthUsedTokens)}</span>
+    </div>
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="text-secondary">{i18nService.t('authMonthUsedQuota')}</span>
+      <span className="font-medium text-foreground">{formatQuotaCurrency(quota.monthUsedQuota, quota.quotaCurrency)}</span>
+    </div>
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="text-secondary">{i18nService.t('authMonthlyQuota')}</span>
+      <span className="font-medium text-foreground">{formatMonthlyQuota(quota)}</span>
+    </div>
+  </div>
+);
 
 interface AccountMenuActionProps {
   icon: React.ReactNode;
@@ -144,6 +182,7 @@ const PortalMenuIcon: React.FC<{ src: string; darkInvert?: boolean }> = ({
 
 const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const user = useSelector((state: RootState) => state.auth.user);
+  const quota = useSelector((state: RootState) => state.auth.quota);
   const profileSummary = useSelector((state: RootState) => state.auth.profileSummary);
   const [creditsExpanded, setCreditsExpanded] = useState(false);
   const isEn = i18nService.getLanguage() === 'en';
@@ -152,26 +191,9 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     authService.fetchProfileSummary();
   }, []);
 
-  const openPortalUrl = async (url: string) => {
-    await window.electron.shell.openExternal(url);
-    onClose();
-  };
-
   const handleLogout = async () => {
     await authService.logout();
     onClose();
-  };
-
-  const handleUsageOverview = async () => {
-    await openPortalUrl(getPortalProfileUrl());
-  };
-
-  const handleRecharge = async () => {
-    await openPortalUrl(getPortalRechargeUrl());
-  };
-
-  const handleInvite = async () => {
-    await openPortalUrl(getPortalInvitationUrl());
   };
 
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';
@@ -179,6 +201,7 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const totalCredits = profileSummary?.totalCreditsRemaining ?? 0;
   const creditItems = profileSummary?.creditItems ?? [];
   const hasCredits = creditItems.length > 0;
+  const showAIHubQuota = quota?.source === 'aihub';
 
   return (
     <div className="absolute bottom-full left-[-0.5rem] mb-1 w-[14.5rem] bg-surface rounded-xl shadow-popover border border-border overflow-hidden z-50 popover-enter">
@@ -194,72 +217,59 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         )}
       </div>
 
-      {/* Credits section - collapsible */}
-      <div className="border-b border-border">
-        <button
-          type="button"
-          onClick={() => setCreditsExpanded(!creditsExpanded)}
-          className="w-full px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-surface-raised transition-colors"
-        >
-          <span className="text-xs text-secondary">
-            {i18nService.t('authCreditsRemaining')}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-medium text-foreground">
-              {formatCredits(totalCredits)}{i18nService.t('authCreditsUnit')}
+      {showAIHubQuota && quota ? (
+        <AIHubQuotaRows quota={quota} />
+      ) : (
+        <div className="border-b border-border">
+          <button
+            type="button"
+            onClick={() => setCreditsExpanded(!creditsExpanded)}
+            className="w-full px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-surface-raised transition-colors"
+          >
+            <span className="text-xs text-secondary">
+              {i18nService.t('authCreditsRemaining')}
             </span>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`text-secondary transition-transform duration-200 ${creditsExpanded ? 'rotate-180' : ''}`}
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </div>
-        </button>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-foreground">
+                {formatCredits(totalCredits)}{i18nService.t('authCreditsUnit')}
+              </span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`text-secondary transition-transform duration-200 ${creditsExpanded ? 'rotate-180' : ''}`}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
+          </button>
 
-        {/* Expanded credit details */}
-        {creditsExpanded && (
-          <div className="px-4 pb-3">
-            {hasCredits ? (
-              <div className="divide-y divide-border">
-                {creditItems.map((item, idx) => (
-                  <CreditItemRow key={idx} item={item} isEn={isEn} />
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-secondary py-1">
-                {i18nService.t('authZeroCredits')}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+          {creditsExpanded && (
+            <div className="px-4 pb-3">
+              {hasCredits ? (
+                <div className="divide-y divide-border">
+                  {creditItems.map((item, idx) => (
+                    <CreditItemRow key={idx} item={item} isEn={isEn} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-secondary py-1">
+                  {i18nService.t('authZeroCredits')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="py-1">
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={usageOverviewIconUrl} darkInvert />}
-          label={i18nService.t('authUsageOverview')}
-          onClick={handleUsageOverview}
-        />
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={rechargeIconUrl} darkInvert />}
-          label={i18nService.t('authGoRecharge')}
-          onClick={handleRecharge}
-        />
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={inviteCreditsIconUrl} darkInvert />}
-          label={i18nService.t('authInviteFriendsForCredits')}
-          onClick={handleInvite}
-        />
         <AccountMenuAction
           icon={<PortalMenuIcon src={logoutIconUrl} darkInvert />}
           label={i18nService.t('authLogout')}
