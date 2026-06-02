@@ -54,7 +54,6 @@ import {
   MediaMentionSegmentKind,
   resolveMediaMentionTrigger,
 } from './mediaMentionUtils';
-import MediaModelPicker from './MediaModelPicker';
 import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
 import { buildSelectedSkillRoutingPrompt } from './selectedSkillRoutingPrompt';
 import { usePersistAgentModelSelection } from './usePersistAgentModelSelection';
