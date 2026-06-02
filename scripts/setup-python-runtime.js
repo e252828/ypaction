@@ -346,8 +346,28 @@ function findRuntimeRoot(baseDir) {
   return null;
 }
 
+function resolveProxyAgent() {
+  const proxyUrl =
+    process.env.HTTPS_PROXY || process.env.HTTP_PROXY ||
+    process.env.https_proxy || process.env.http_proxy;
+  if (!proxyUrl) return undefined;
+  try {
+    // Node.js 18+ bundles undici; use the built-in ProxyAgent
+    const { ProxyAgent } = require('undici');
+    return new ProxyAgent(proxyUrl);
+  } catch {
+    return undefined;
+  }
+}
+
 async function downloadArchive(url, destination) {
-  const response = await fetch(url, { redirect: 'follow' });
+  const fetchOptions = { redirect: 'follow' };
+  const dispatcher = resolveProxyAgent();
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher;
+    console.log(`[setup-python-runtime] Using proxy for download: ${url}`);
+  }
+  const response = await fetch(url, fetchOptions);
   if (!response.ok || !response.body) {
     throw new Error(`Download failed (${response.status} ${response.statusText}) for ${url}`);
   }

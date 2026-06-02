@@ -53,3 +53,5 @@ sandbox/
 openspec/
 .superpowers/
 .diagram/
+
+tmp-python-runtime*/
