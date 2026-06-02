@@ -2,12 +2,12 @@
 
 ## 仓库配置
 
-本项目基于 [LobsterAI](https://github.com/netease-youdao/LobsterAI.git) 进行二次开发，采用双远程仓库策略：
+本项目基于 [YP Action](https://github.com/netease-youdao/YP Action.git) 进行二次开发，采用双远程仓库策略：
 
 | 远程名称 | 仓库地址 | 说明 |
 |---------|---------|------|
 | `origin` | `https://codeup.aliyun.com/66f3de5e691d6fdafb3cd1de/ai/ypaction.git` | 正式仓库（阿里云 CodeUp） |
-| `upstream` | `https://github.com/netease-youdao/LobsterAI.git` | 上游开源仓库（GitHub） |
+| `upstream` | `https://github.com/netease-youdao/YP Action.git` | 上游开源仓库（GitHub） |
 
 ## 日常开发流程
 
@@ -25,7 +25,7 @@ git commit -m "feat: 描述你的修改"
 git push origin main
 ```
 
-## 合并上游（LobsterAI）更新
+## 合并上游（YP Action）更新
 
 当上游开源仓库有新版本发布，需要合并到正式项目时，按以下步骤操作：
 
@@ -52,7 +52,7 @@ git status
 git add <冲突文件>
 
 # 5. 完成合并
-git commit -m "merge: 合并上游 LobsterAI 最新更新"
+git commit -m "merge: 合并上游 YP Action 最新更新"
 
 # 6. 推送到正式仓库
 git push origin main

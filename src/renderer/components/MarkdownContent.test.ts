@@ -23,8 +23,8 @@ test('large markdown preview keeps the head and latest tail', () => {
 });
 
 test('kit links are treated as safe internal links', () => {
-  expect(safeUrlTransform('kit://design@lobsterai-kits')).toBe('kit://design@lobsterai-kits');
-  expect(isInternalHref('kit://design@lobsterai-kits')).toBe(true);
+  expect(safeUrlTransform('kit://design@ypaction-kits')).toBe('kit://design@ypaction-kits');
+  expect(isInternalHref('kit://design@ypaction-kits')).toBe(true);
 });
 
 test('unsafe markdown protocols are still stripped', () => {

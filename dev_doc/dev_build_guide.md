@@ -1,4 +1,4 @@
-# LobsterAI 开发与构建命令说明
+# YP Action 开发与构建命令说明
 
 > 本文档基于实际环境验证编写，环境信息：Windows / Node.js v24.13.1 / npm 11.8.0
 
@@ -6,7 +6,7 @@
 
 ## 1. 项目概述
 
-**LobsterAI** 是一个基于 Electron + React + TypeScript 的全场景个人助理桌面应用，由网易有道开发。
+**YP Action** 是一个基于 Electron + React + TypeScript 的全场景个人助理桌面应用，由网易有道开发。
 
 | 维度 | 详情 |
 |------|------|
@@ -243,7 +243,7 @@ npm run dist:win
 npx cross-env KEYFROM=xxx npm run dist:win
 ```
 
-输出：`release/LobsterAI Setup x.x.x.exe`（NSIS 安装包）
+输出：`release/YP Action Setup x.x.x.exe`（NSIS 安装包）
 
 ### 7.2 macOS
 
@@ -258,7 +258,7 @@ npm run dist:mac:x64
 npm run dist:mac:universal
 ```
 
-输出：`release/LobsterAI-x.x.x-arm64.dmg` 等
+输出：`release/YP Action-x.x.x-arm64.dmg` 等
 
 ### 7.3 Linux
 
@@ -266,7 +266,7 @@ npm run dist:mac:universal
 npm run dist:linux
 ```
 
-输出：`release/LobsterAI-x.x.x.AppImage`
+输出：`release/YP Action-x.x.x.AppImage`
 
 ### 7.4 仅打包不安装（调试用）
 
@@ -391,7 +391,7 @@ node scripts/setup-python-runtime.js
 
 ```powershell
 # 手动下载 python-embed zip 到项目根目录
-$env:LOBSTERAI_PORTABLE_PYTHON_ARCHIVE = "E:\code\ypaction2\resources\python-win-runtime.zip"
+$env:YPACTION_PORTABLE_PYTHON_ARCHIVE = "E:\code\ypaction2\resources\python-win-runtime.zip"
 ```
 
 ### Q: OpenClaw 插件下载失败？

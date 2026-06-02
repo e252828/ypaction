@@ -198,7 +198,7 @@ const VideoGenerateSchema = Type.Object({
 const plugin = {
   id: 'lobster-media-generation',
   name: 'LobsterMediaGeneration',
-  description: 'Image and video generation tools powered by LobsterAI server.',
+  description: 'Image and video generation tools powered by YP Action server.',,
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);
@@ -221,7 +221,7 @@ const plugin = {
         name: 'lobsterai_image_generate',
         label: 'Image Generation',
         description: [
-          'Generate images using LobsterAI server.',
+          'Generate images using YP Action server.',,
           'Supports text-to-image and image-to-image generation.',
           'Use action="list" to see available models and their capabilities.',
           'Use action="status" with taskId to check async task progress.',
@@ -259,7 +259,7 @@ const plugin = {
         name: 'lobsterai_video_generate',
         label: 'Video Generation',
         description: [
-          'Generate videos using LobsterAI server.',
+          'Generate videos using YP Action server.',,
           'Supports text-to-video, image-to-video, and video editing.',
           'IMPORTANT: Different models have different valid parameters and value ranges.',
           'WORKFLOW: You MUST follow this three-step process:',

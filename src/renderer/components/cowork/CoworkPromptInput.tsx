@@ -1394,7 +1394,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const largeInputToolActions = (
     <div className="flex items-center gap-0.5">
       {largeInputActions}
-      <MediaModelPicker draftKey={draftKey} disabled={disabled} />
     </div>
   );
   const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';

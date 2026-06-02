@@ -628,7 +628,7 @@ const IMSettings: React.FC = () => {
 
   const handleEmailGetApiKey = async () => {
     if (!activeEmailInstanceId) return;
-    const apiKeyUrl = 'https://claw.163.com/projects/dashboard/?channel=LobsterAI#/api-keys';
+    const apiKeyUrl = 'https://claw.163.com/projects/dashboard/?channel=YP Action#/api-keys';
     try {
       await window.electron.shell.openExternal(apiKeyUrl);
     } catch {
@@ -2828,7 +2828,7 @@ const IMSettings: React.FC = () => {
                     setWecomQuickSetupStatus('pending');
                     setWecomQuickSetupError('');
                     try {
-                      const bot = await WecomAIBotSDK.openBotInfoAuthWindow({ source: 'lobster-ai' });
+                      const bot = await WecomAIBotSDK.openBotInfoAuthWindow({ source: 'ypaction' });
                       if (!isMountedRef.current) return;
                       dispatch(setWecomInstanceConfig({ instanceId: activeWecomInstanceId!, config: { botId: bot.botid, secret: bot.secret, enabled: true } }));
                       dispatch(clearError());

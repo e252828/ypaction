@@ -15,7 +15,7 @@ export const ArtifactPreviewProtocol = {
 export type ArtifactPreviewProtocol = typeof ArtifactPreviewProtocol[keyof typeof ArtifactPreviewProtocol];
 
 export const ArtifactBrowserPartition = {
-  Default: 'persist:lobster-artifact-browser',
+  Default: 'persist:ypaction-artifact-browser',
 } as const;
 
 export type ArtifactBrowserPartition = typeof ArtifactBrowserPartition[keyof typeof ArtifactBrowserPartition];

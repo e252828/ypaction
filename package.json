@@ -1,9 +1,9 @@
 {
-  "name": "lobsterai",
+  "name": "ypaction",
   "private": true,
   "author": {
-    "name": "LobsterAI",
-    "email": "lobsterai.project@rd.netease.com"
+    "name": "YP Action",
+    "email": "ypaction@eshypdata.com"
   },
   "license": "MIT",
   "version": "2026.6.1",

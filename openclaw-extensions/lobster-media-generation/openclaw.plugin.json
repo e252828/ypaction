@@ -1,14 +1,14 @@
 {
   "id": "lobster-media-generation",
   "name": "LobsterMediaGeneration",
-  "description": "Image and video generation tools powered by LobsterAI server.",
+  "description": "Image and video generation tools powered by YP Action server.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "callbackUrl": {
         "type": "string",
-        "description": "LobsterAI HTTP callback URL for media generation requests"
+        "description": "YP Action HTTP callback URL for media generation requests"
       },
       "secret": {
         "type": "string",

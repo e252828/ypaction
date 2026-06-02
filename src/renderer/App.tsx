@@ -205,8 +205,12 @@ const App: React.FC = () => {
         }
         mark('model resolution done');
 
+        // 自动同意服务协议，跳过弹框
         const agreed = await window.electron.store.get('privacy_agreed');
-        setPrivacyAgreed(agreed === true);
+        if (!agreed) {
+          await window.electron.store.set('privacy_agreed', true);
+        }
+        setPrivacyAgreed(true);
         mark('privacy check done');
 
         setIsInitialized(true);
