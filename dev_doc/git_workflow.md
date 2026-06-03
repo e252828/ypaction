@@ -2,12 +2,19 @@
 
 ## 仓库配置
 
-本项目基于 [YP Action](https://github.com/netease-youdao/YP Action.git) 进行二次开发，采用双远程仓库策略：
+本项目基于 [LobsterAI](https://github.com/netease-youdao/LobsterAI.git) 进行二次开发，采用三远程仓库策略：
 
 | 远程名称 | 仓库地址 | 说明 |
 |---------|---------|------|
 | `origin` | `https://codeup.aliyun.com/66f3de5e691d6fdafb3cd1de/ai/ypaction.git` | 正式仓库（阿里云 CodeUp） |
-| `upstream` | `https://github.com/netease-youdao/YP Action.git` | 上游开源仓库（GitHub） |
+| `upstream` | `https://github.com/netease-youdao/LobsterAI.git` | 上游开源仓库（GitHub） |
+| `build` | `https://github.com/markmle/ypaction.git` | Mac 构建仓库（GitHub Actions 自动构建） |
+
+### 远程仓库作用说明
+
+- **`origin`**：日常开发的主仓库，所有二次开发代码提交到这里
+- **`upstream`**：只读的上游开源仓库，用于拉取最新更新合并到正式项目
+- **`build`**：专门用于触发 GitHub Actions 自动构建 macOS 版本，推送到此仓库的代码会触发 `.github/workflows/build-mac.yml` 工作流
 
 ## 日常开发流程
 
@@ -17,15 +24,23 @@
 git pull origin main
 ```
 
-### 2. 提交二次开发代码
+### 3. 触发 Mac 构建
+
+当需要构建 macOS 版本时，推送代码到 `build` 远程仓库即可自动触发 GitHub Actions 构建：
 
 ```bash
-git add .
-git commit -m "feat: 描述你的修改"
-git push origin main
+# 将当前 main 分支推送到 build 远程仓库，触发 Mac 构建
+git push build main
 ```
 
-## 合并上游（YP Action）更新
+推送后，GitHub Actions 会自动执行 `.github/workflows/build-mac.yml` 工作流：
+- 并行构建 macOS arm64 和 x64 版本
+- 构建 Universal 版本（合并双架构）
+- 构建产物上传为 Artifacts，保留 7 天
+
+也可以在 GitHub 仓库页面的 **Actions** 选项卡中手动触发构建（`workflow_dispatch`），选择构建架构。
+
+## 合并上游（LobsterAI）更新
 
 当上游开源仓库有新版本发布，需要合并到正式项目时，按以下步骤操作：
 
@@ -52,7 +67,7 @@ git status
 git add <冲突文件>
 
 # 5. 完成合并
-git commit -m "merge: 合并上游 YP Action 最新更新"
+git commit -m "merge: 合并上游 LobsterAI 最新更新"
 
 # 6. 推送到正式仓库
 git push origin main
@@ -121,30 +136,91 @@ git pull origin main           # 拉取正式仓库最新代码
 # ... 进行二次开发 ...
 git add .
 git commit -m "feat: 新增xxx功能"
-git push origin main
+git push origin main           # 推送到正式仓库
+
+# === 触发 Mac 构建 ===
+git push build main            # 推送到 build 仓库，触发 GitHub Actions 构建 macOS
 
 # === 同步上游更新 ===
 git fetch upstream             # 拉取上游最新代码
 git merge upstream/main        # 合并上游更新
 # ... 解决冲突（如果有）...
 git push origin main           # 推送到正式仓库
+git push build main            # 同步到 build 仓库（也会触发 Mac 构建）
 ```
 
 ## 注意事项
 
 1. **不要直接推送到 upstream**：`upstream` 是只读的上游仓库，所有修改应推送到 `origin`
-2. **合并前先提交**：合并上游前，确保本地所有修改已提交或暂存（`git stash`）
-3. **备份重要修改**：大型合并前，建议先在独立分支上测试合并效果
-4. **保留上游 Tag**：合并上游时，上游的 tag 可以拉取下来作为版本标记
+2. **`build` 仓库用于触发构建**：推送到 `build` 会触发 GitHub Actions 自动构建 macOS，不需要手动在 Mac 上打包
+3. **合并前先提交**：合并上游前，确保本地所有修改已提交或暂存（`git stash`）
+4. **备份重要修改**：大型合并前，建议先在独立分支上测试合并效果
+5. **保留上游 Tag**：合并上游时，上游的 tag 可以拉取下来作为版本标记
    ```bash
    git fetch upstream --tags
    ```
+
+## GitHub Actions Mac 构建说明
+
+### 工作流文件
+
+`.github/workflows/build-mac.yml` — 专门用于 macOS 构建的 GitHub Actions 工作流。
+
+### 触发方式
+
+| 触发方式 | 说明 |
+|---------|------|
+| `git push build main` | 推送代码到 build 远程仓库，自动触发 |
+| `workflow_dispatch` | 在 GitHub Actions 页面手动触发，可选择架构 |
+
+### 构建架构
+
+| 架构 | npm script | 说明 |
+|------|-----------|------|
+| arm64 | `dist:mac:arm64` | Apple Silicon (M1/M2/M3) |
+| x64 | `dist:mac:x64` | Intel Mac |
+| universal | `dist:mac:universal` | 双架构通用版本 |
+
+### 构建流程
+
+```mermaid
+flowchart LR
+    A[git push build main] --> B[GitHub Actions 触发]
+    B --> C[build-macos-arm64]
+    B --> D[build-macos-x64]
+    C --> E[上传 arm64.dmg]
+    D --> F[上传 x64.dmg]
+    C & D --> G[build-macos-universal]
+    G --> H[上传 universal.dmg]
+```
+
+### 代码签名
+
+构建工作流支持 macOS 代码签名，需要在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中配置以下 Secrets：
+
+| Secret | 说明 |
+|--------|------|
+| `MAC_CSC_LINK` | macOS 开发者证书（Base64 编码的 .p12 文件） |
+| `MAC_CSC_KEY_PASSWORD` | 证书密码 |
+| `APPLE_ID` | Apple Developer 账号 |
+| `APPLE_APP_SPECIFIC_PASSWORD` | Apple App-Specific Password（用于公证） |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+
+> 如果未配置签名证书，构建仍会成功，但生成的 .dmg 文件未签名，用户安装时需要手动允许。
 
 ## 当前状态速查
 
 ```bash
 # 查看远程仓库配置
 git remote -v
+
+# 预期输出：
+# build    https://github.com/markmle/ypaction.git (fetch)
+# build    https://github.com/markmle/ypaction.git (push)
+# origin   https://codeup.aliyun.com/66f3de5e691d6fdafb3cd1de/ai/ypaction.git (fetch)
+# origin   https://codeup.aliyun.com/66f3de5e691d6fdafb3cd1de/ai/ypaction.git (push)
+# upstream https://github.com/netease-youdao/LobsterAI.git (fetch)
+# upstream https://github.com/netease-youdao/LobsterAI.git (push)
 
 # 查看所有分支
 git branch -a
