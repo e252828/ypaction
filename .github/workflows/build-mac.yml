@@ -65,11 +65,7 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.arch == 'arm64' || inputs.arch == 'universal' }}
         run: npm run dist:mac:arm64
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload arm64 Artifact
         if: ${{ (github.event_name == 'push' || inputs.upload_artifact) && (github.event_name == 'push' || inputs.arch == 'arm64' || inputs.arch == 'universal') }}
@@ -110,11 +106,7 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.arch == 'x64' || inputs.arch == 'universal' }}
         run: npm run dist:mac:x64
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload x64 Artifact
         if: ${{ (github.event_name == 'push' || inputs.upload_artifact) && (github.event_name == 'push' || inputs.arch == 'x64' || inputs.arch == 'universal') }}
@@ -156,11 +148,7 @@ jobs:
       - name: Build macOS Universal
         run: npm run dist:mac:universal
         env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload Universal Artifact
         if: ${{ github.event_name == 'push' || inputs.upload_artifact }}
