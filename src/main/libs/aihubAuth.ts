@@ -109,7 +109,7 @@ export type AIHubServerModel = {
   accessible: boolean;
 };
 
-type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export function resolveAIHubIssuer(isTestMode: boolean): string {
   return isTestMode ? AIHubAuth.TestIssuer : AIHubAuth.Issuer;

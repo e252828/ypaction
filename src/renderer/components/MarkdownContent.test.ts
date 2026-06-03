@@ -3,6 +3,7 @@ import { expect, test } from 'vitest';
 import {
   getLargeMarkdownPreview,
   isInternalHref,
+  resolveCachedImageDisplaySrc,
   safeUrlTransform,
   shouldUseLargeMarkdownPreview,
 } from './MarkdownContent';
@@ -29,4 +30,22 @@ test('kit links are treated as safe internal links', () => {
 
 test('unsafe markdown protocols are still stripped', () => {
   expect(safeUrlTransform('javascript:alert(1)')).toBe('');
+});
+
+test('cached images use data URLs from the local cache when available', async () => {
+  const src = await resolveCachedImageDisplaySrc(
+    'C:\\Users\\lemcon\\AppData\\Roaming\\YP Action\\image-cache\\chat-images\\a.png',
+    async () => ({ success: true, dataUrl: 'data:image/png;base64,abc' }),
+  );
+
+  expect(src).toBe('data:image/png;base64,abc');
+});
+
+test('cached images fall back to localfile URLs when data URL reading fails', async () => {
+  const src = await resolveCachedImageDisplaySrc(
+    'C:\\Users\\lemcon\\AppData\\Roaming\\YP Action\\image-cache\\chat-images\\a.png',
+    async () => ({ success: false, error: 'read failed' }),
+  );
+
+  expect(src).toBe('localfile:///C%3A/Users/lemcon/AppData/Roaming/YP%20Action/image-cache/chat-images/a.png');
 });

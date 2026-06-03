@@ -61,6 +61,7 @@ import {
   HtmlShareIpc,
   HtmlShareSourceType,
 } from '../shared/htmlShare/constants';
+import { ImageCacheIpc } from '../shared/imageCache/constants';
 import type {
   KitReference,
   ResolvedKitCapabilities,
@@ -120,6 +121,7 @@ import {
   type AIHubLLMConfig,
   type AIHubQuota,
   type AIHubTokenSet,
+  type AIHubUserProfile,
   buildAIHubAuthorizeUrl,
   buildAIHubRuntimeConfig,
   buildAIHubUpstreamUrl,
@@ -133,6 +135,7 @@ import {
   selectAIHubTokenForModel,
   validateAIHubCallbackState,
 } from './libs/aihubAuth';
+import { restoreAIHubSession } from './libs/aihubSession';
 import { AppUpdateCoordinator } from './libs/appUpdateCoordinator';
 import {
   clearServerModelMetadata,
@@ -187,6 +190,7 @@ import {
 } from './libs/htmlPreviewServer';
 import { getHtmlShareBySource, updateHtmlShare, uploadHtmlShare } from './libs/htmlShare/htmlShareClient';
 import { packageHtmlFile } from './libs/htmlShare/htmlSharePackager';
+import { cacheRemoteImage } from './libs/imageCache';
 import { initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer, type MediaGenerationRequest, type MediaGenerationResponse } from './libs/mcpBridgeServer';
@@ -519,6 +523,9 @@ type ByteRange = {
 function getLocalFileProtocolPath(requestUrl: string): string {
   const url = new URL(requestUrl);
   let filePath = decodeURIComponent(url.pathname);
+  if (process.platform === 'win32' && /^[A-Za-z]$/.test(url.host)) {
+    return `${url.host.toUpperCase()}:${filePath.replace(/\//g, '\\')}`;
+  }
   if (url.host && process.platform !== 'win32') {
     filePath = `/${decodeURIComponent(url.host)}${filePath}`;
   }
@@ -975,6 +982,53 @@ const savePngWithDialog = async (
   const outputPath = ensurePngFileName(saveResult.filePath);
   await fs.promises.writeFile(outputPath, pngData);
   return { success: true, canceled: false, path: outputPath };
+};
+
+const getDefaultImageSaveName = (defaultFileName?: string, extension = '.png'): string => {
+  const normalized =
+    typeof defaultFileName === 'string' && defaultFileName.trim()
+      ? defaultFileName.trim()
+      : `image-${Date.now()}${extension}`;
+  const safeName = sanitizeExportFileName(path.basename(normalized));
+  return path.extname(safeName) ? safeName : `${safeName}${extension}`;
+};
+
+const saveImageBufferWithDialog = async (
+  webContents: WebContents,
+  imageData: Buffer,
+  options?: { defaultFileName?: string; mimeType?: string },
+): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> => {
+  if (!imageData.length) {
+    return { success: false, error: 'Image data is required' };
+  }
+
+  const extension = MIME_EXTENSION_MAP[options?.mimeType || ''] || '.png';
+  const defaultName = getDefaultImageSaveName(options?.defaultFileName, extension);
+  const ownerWindow = BrowserWindow.fromWebContents(webContents);
+  const saveOptions = {
+    title: 'Save Image',
+    defaultPath: path.join(app.getPath('downloads'), defaultName),
+    filters: [
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico', 'tiff'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  };
+  const saveResult = ownerWindow
+    ? await dialog.showSaveDialog(ownerWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+
+  if (saveResult.canceled || !saveResult.filePath) {
+    return { success: true, canceled: true };
+  }
+
+  await fs.promises.writeFile(saveResult.filePath, imageData);
+  return { success: true, canceled: false, path: saveResult.filePath };
+};
+
+const parseImageDataUrl = (dataUrl: string): { buffer: Buffer; mimeType: string } | null => {
+  const match = /^data:([^;,]+);base64,(.+)$/i.exec(dataUrl.trim());
+  if (!match || !match[1].startsWith('image/')) return null;
+  return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
 };
 
 const configureUserDataPath = (): void => {
@@ -2999,6 +3053,12 @@ if (!gotTheLock) {
     }
   };
 
+  const getCachedAuthUser = (): AIHubUserProfile | null => {
+    return getStore().get<AIHubUserProfile>(AIHubAuthStoreKey.User)
+      || getStore().get<AIHubUserProfile>(AUTH_USER_STORE_KEY)
+      || null;
+  };
+
   // refreshOnce() is the single entry-point for all token refresh paths
   // (proactive, proxy 401/403 retry, and main-process authenticated API 401s).
   // It deduplicates concurrent calls via pendingTokenRefresh so that rolling
@@ -3072,7 +3132,14 @@ if (!gotTheLock) {
     if (!tokens?.accessToken) {
       throw new Error('No AIHub auth tokens are available.');
     }
-    const config = await fetchAIHubLLMConfig(getAIHubConfig(), tokens.accessToken, fetchAIHub);
+    let config: AIHubLLMConfig;
+    try {
+      config = await fetchAIHubLLMConfig(getAIHubConfig(), tokens.accessToken, fetchAIHub);
+    } catch (error) {
+      const refreshedAccessToken = tokens.refreshToken ? await refreshOnce('llm-config') : null;
+      if (!refreshedAccessToken) throw error;
+      config = await fetchAIHubLLMConfig(getAIHubConfig(), refreshedAccessToken, fetchAIHub);
+    }
     cachedAIHubLLMConfig = {
       value: config,
       expiresAt: now + AIHubAuth.LlmConfigCacheTtlMs,
@@ -4028,15 +4095,46 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const user = await fetchAIHubUserInfo(getAIHubConfig(), tokens.accessToken, fetchAIHub);
-      saveAuthUser(user);
-      const previousQuotaGateState = getAuthQuotaGateState();
-      const llmConfig = await getAIHubLLMConfigCached();
-      const quota = normalizeQuota(llmConfig.quota);
-      updateServerModelMetadata(normalizeAIHubModels(llmConfig));
-      syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      console.log('[Auth] AIHub user profile refreshed');
-      return { success: true, user, quota };
+      const snapshot = await restoreAIHubSession({
+        config: getAIHubConfig(),
+        tokens,
+        cachedUser: getCachedAuthUser(),
+        fetchImpl: fetchAIHub,
+      });
+      if (!snapshot.success || !snapshot.user) {
+        console.warn('[Auth] AIHub getUser failed:', snapshot.error);
+        return { success: false };
+      }
+
+      if (
+        snapshot.tokens
+        && (
+          snapshot.tokens.accessToken !== tokens.accessToken
+          || snapshot.tokens.refreshToken !== tokens.refreshToken
+        )
+      ) {
+        saveAuthTokens(snapshot.tokens);
+        clearAIHubLLMConfigCache();
+      }
+      if (!snapshot.isStale) {
+        saveAuthUser(snapshot.user);
+      }
+
+      let quota: ReturnType<typeof normalizeQuota> | null = null;
+      if (snapshot.llmConfig) {
+        const previousQuotaGateState = getAuthQuotaGateState();
+        cachedAIHubLLMConfig = {
+          value: snapshot.llmConfig,
+          expiresAt: Date.now() + AIHubAuth.LlmConfigCacheTtlMs,
+        };
+        quota = normalizeQuota(snapshot.llmConfig.quota);
+        updateServerModelMetadata(normalizeAIHubModels(snapshot.llmConfig));
+        syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
+      }
+      console.log(snapshot.isStale
+        ? '[Auth] AIHub user profile restored from local cache'
+        : '[Auth] AIHub user profile refreshed');
+      return { success: true, user: snapshot.user, quota };
     } catch (error) {
       console.warn('[Auth] AIHub getUser failed:', error);
       return { success: false };
@@ -7966,6 +8064,64 @@ if (!gotTheLock) {
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle(ImageCacheIpc.CacheRemoteImage, async (_event, url?: string) => {
+    try {
+      if (typeof url !== 'string' || !url.trim()) {
+        return { success: false, error: 'Missing image URL' };
+      }
+      return await cacheRemoteImage({
+        url,
+        cacheDir: path.join(app.getPath('userData'), 'image-cache', 'chat-images'),
+      });
+    } catch (error) {
+      console.warn('[ImageCache] failed to cache remote image:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cache image',
+      };
+    }
+  });
+
+  ipcMain.handle(ImageCacheIpc.SaveImageFromFile, async (event, filePath?: string) => {
+    try {
+      if (typeof filePath !== 'string' || !filePath.trim()) {
+        return { success: false, error: 'Missing image file path' };
+      }
+      const resolvedPath = path.resolve(filePath.trim());
+      const imageData = await fs.promises.readFile(resolvedPath);
+      return await saveImageBufferWithDialog(event.sender, imageData, {
+        defaultFileName: path.basename(resolvedPath),
+        mimeType: MIME_BY_EXT[path.extname(resolvedPath).toLowerCase()] || 'image/png',
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save image',
+      };
+    }
+  });
+
+  ipcMain.handle(ImageCacheIpc.SaveImageFromDataUrl, async (event, dataUrl?: string, defaultFileName?: string) => {
+    try {
+      if (typeof dataUrl !== 'string' || !dataUrl.trim()) {
+        return { success: false, error: 'Missing image data' };
+      }
+      const parsed = parseImageDataUrl(dataUrl);
+      if (!parsed) {
+        return { success: false, error: 'Invalid image data' };
+      }
+      return await saveImageBufferWithDialog(event.sender, parsed.buffer, {
+        defaultFileName,
+        mimeType: parsed.mimeType,
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to save image',
+      };
     }
   });
 

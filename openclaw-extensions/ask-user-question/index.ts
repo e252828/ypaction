@@ -122,7 +122,7 @@ async function askUser(
 const plugin = {
   id: 'ask-user-question',
   name: 'AskUserQuestion',
-  description: 'Structured user confirmation tool for YP Action desktop.',,
+  description: 'Structured user confirmation tool for YP Action desktop.',
   configSchema: {
     parse(value: unknown): PluginConfig {
       return parsePluginConfig(value);

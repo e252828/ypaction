@@ -821,6 +821,18 @@ interface IElectronAPI {
     writeImageFromFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
     writeImageFromDataUrl: (dataUrl: string) => Promise<{ success: boolean; error?: string }>;
   };
+  imageCache: {
+    cacheRemoteImage: (
+      url: string,
+    ) => Promise<{ success: boolean; filePath?: string; mimeType?: string; error?: string }>;
+    saveImageFromFile: (
+      filePath: string,
+    ) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+    saveImageFromDataUrl: (
+      dataUrl: string,
+      defaultFileName?: string,
+    ) => Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }>;
+  };
   htmlShare: {
     createFromHtmlFile: (options: {
       sessionId: string;

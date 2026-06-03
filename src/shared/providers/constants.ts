@@ -482,6 +482,7 @@ const PROVIDER_DEFINITIONS = [
     defaultModels: [
       { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true },
       { id: 'gpt-5.5', name: 'GPT-5.5', supportsImage: true },
+      { id: 'gpt-image-2', name: 'GPT Image 2', supportsImage: true },
     ],
   },
   {

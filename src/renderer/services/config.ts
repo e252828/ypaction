@@ -231,6 +231,7 @@ const ADDED_PROVIDER_MODELS: Record<string, { models: ProviderModel[]; position:
     models: [
       { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true },
       { id: 'gpt-5.5', name: 'GPT-5.5', supportsImage: true },
+      { id: 'gpt-image-2', name: 'GPT Image 2', supportsImage: true },
     ],
     position: 'start',
   },

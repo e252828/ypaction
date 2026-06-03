@@ -2,7 +2,7 @@ import 'katex/dist/katex.min.css';
 import 'katex/contrib/mhchem';
 
 import { DocumentIcon, FolderIcon } from '@heroicons/react/24/outline';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 // @ts-ignore
 import rehypeKatex from 'rehype-katex';
@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 
 import { i18nService } from '../services/i18n';
+import { getLocalFilePathFromImageSrc, toLocalFileSrc } from '../utils/imageSource';
 import { type ShellActionResult, showShellFailureToast, showToast } from '../utils/localFileActions';
 import CodeBlock from './CodeBlock';
 
@@ -179,6 +180,24 @@ export const isInternalHref = (href: string): boolean => {
   return !!protocol && INTERNAL_URL_PROTOCOLS.has(protocol);
 };
 
+type ReadFileAsDataUrl = (filePath: string) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
+
+export const resolveCachedImageDisplaySrc = async (
+  filePath: string,
+  readFileAsDataUrl: ReadFileAsDataUrl,
+): Promise<string> => {
+  const localFileSrc = toLocalFileSrc(filePath);
+  try {
+    const result = await readFileAsDataUrl(filePath);
+    if (result.success && result.dataUrl && /^data:image\//i.test(result.dataUrl)) {
+      return result.dataUrl;
+    }
+  } catch (error) {
+    console.warn('[MarkdownContent] failed to read cached image as data URL:', error);
+  }
+  return localFileSrc;
+};
+
 const openExternalViaDefaultBrowser = async (url: string): Promise<boolean> => {
   const openExternal = (window as any)?.electron?.shell?.openExternal;
   if (typeof openExternal !== 'function') {
@@ -260,32 +279,12 @@ const toFileHref = (filePath: string): string => {
   return `file://${normalized}`;
 };
 
-const encodeLocalPathForUrl = (filePath: string): string => {
-  return filePath
-    .replace(/\\/g, '/')
-    .split('/')
-    .map((segment, index) => {
-      if (index === 0 && segment === '') return '';
-      if (/^[A-Za-z]:$/.test(segment)) return segment;
-      return encodeURIComponent(segment);
-    })
-    .join('/');
-};
-
-const toLocalFileSrc = (filePath: string): string => {
-  const normalized = stripFileProtocol(stripHashAndQuery(filePath.trim()));
-  const encoded = encodeLocalPathForUrl(normalized);
-  if (/^[A-Za-z]:/.test(normalized)) {
-    return `localfile:///${encoded}`;
-  }
-  if (encoded.startsWith('/')) {
-    return `localfile://${encoded}`;
-  }
-  return `localfile:///${encoded}`;
-};
-
 const isRemoteOrInlineImageSrc = (src: string): boolean => {
   return /^(?:https?|data|blob):/i.test(src);
+};
+
+const isRemoteHttpImageSrc = (src: string): boolean => {
+  return /^https?:\/\//i.test(src);
 };
 
 const resolveMarkdownImageSrc = (
@@ -372,7 +371,7 @@ const findFallbackPathFromContext = (
 const createMarkdownComponents = (
   resolveLocalFilePath?: (href: string, text: string) => string | null,
   showRevealInFolderAction = false,
-  onImageClick?: (image: { src: string; alt?: string | null }) => void,
+  onImageClick?: (image: { src: string; alt?: string | null; filePath?: string | null }) => void,
 ) => ({
   p: ({ node: _node, className: _className, children, ...props }: any) => (
     <p className="my-1 first:mt-0 last:mb-0 leading-[23px] text-foreground/90" {...props}>
@@ -459,12 +458,12 @@ const createMarkdownComponents = (
     const resolvedSrc = resolveMarkdownImageSrc(src, alt, resolveLocalFilePath);
     const altText = typeof alt === 'string' ? alt : null;
     return (
-      <img
-        className={`max-w-full max-h-96 object-contain rounded-xl my-4${onImageClick ? ' cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
+      <MarkdownImage
+        {...props}
         src={resolvedSrc}
         alt={altText ?? undefined}
-        onClick={onImageClick && resolvedSrc ? () => onImageClick({ src: resolvedSrc, alt: altText }) : undefined}
-        {...props}
+        altText={altText}
+        onImageClick={onImageClick}
       />
     );
   },
@@ -650,8 +649,62 @@ interface MarkdownContentProps {
   className?: string;
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   showRevealInFolderAction?: boolean;
-  onImageClick?: (image: { src: string; alt?: string | null }) => void;
+  onImageClick?: (image: { src: string; alt?: string | null; filePath?: string | null }) => void;
 }
+
+const MarkdownImage: React.FC<{
+  src?: string;
+  alt?: string;
+  altText?: string | null;
+  onImageClick?: (image: { src: string; alt?: string | null; filePath?: string | null }) => void;
+}> = ({ src, alt, altText, onImageClick, ...props }) => {
+  const [displaySrc, setDisplaySrc] = useState(src);
+  const [filePath, setFilePath] = useState<string | null>(() => src ? getLocalFilePathFromImageSrc(src) : null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplaySrc(src);
+    setFilePath(src ? getLocalFilePathFromImageSrc(src) : null);
+
+    if (!src || !isRemoteHttpImageSrc(src)) return undefined;
+
+    window.electron.imageCache.cacheRemoteImage(src)
+      .then(async result => {
+        if (cancelled) return;
+        if (result.success && result.filePath) {
+          setFilePath(result.filePath);
+          const cachedSrc = await resolveCachedImageDisplaySrc(
+            result.filePath,
+            window.electron.dialog.readFileAsDataUrl,
+          );
+          if (!cancelled) {
+            setDisplaySrc(cachedSrc);
+          }
+          return;
+        }
+        console.warn('[MarkdownContent] remote image cache failed:', result.error);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          console.warn('[MarkdownContent] remote image cache failed:', error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  return (
+    <img
+      {...props}
+      className={`max-w-full max-h-96 object-contain rounded-xl my-4${onImageClick ? ' cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
+      src={displaySrc}
+      alt={alt}
+      onClick={onImageClick && displaySrc ? () => onImageClick({ src: displaySrc, alt: altText, filePath }) : undefined}
+    />
+  );
+};
 
 const MarkdownContent: React.FC<MarkdownContentProps> = ({
   content,

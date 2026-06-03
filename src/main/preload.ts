@@ -9,6 +9,7 @@ import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import { type HtmlShareAccessMode, HtmlShareIpc } from '../shared/htmlShare/constants';
+import { ImageCacheIpc } from '../shared/imageCache/constants';
 import type {
   KitReference,
   KitSkillMetadata,
@@ -545,6 +546,14 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(ClipboardIpc.WriteImageFromFile, filePath),
     writeImageFromDataUrl: (dataUrl: string) =>
       ipcRenderer.invoke(ClipboardIpc.WriteImageFromDataUrl, dataUrl),
+  },
+  imageCache: {
+    cacheRemoteImage: (url: string) =>
+      ipcRenderer.invoke(ImageCacheIpc.CacheRemoteImage, url),
+    saveImageFromFile: (filePath: string) =>
+      ipcRenderer.invoke(ImageCacheIpc.SaveImageFromFile, filePath),
+    saveImageFromDataUrl: (dataUrl: string, defaultFileName?: string) =>
+      ipcRenderer.invoke(ImageCacheIpc.SaveImageFromDataUrl, dataUrl, defaultFileName),
   },
   htmlShare: {
     createFromHtmlFile: (options: {
