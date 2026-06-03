@@ -61,9 +61,15 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Build OpenClaw Runtime (macOS arm64)
+        if: ${{ github.event_name == 'push' || inputs.arch == 'arm64' || inputs.arch == 'universal' }}
+        run: npm run openclaw:runtime:mac-arm64
+        env:
+          OPENCLAW_FORCE_BUILD: 1
+
       - name: Build macOS arm64
         if: ${{ github.event_name == 'push' || inputs.arch == 'arm64' || inputs.arch == 'universal' }}
-        run: npm run dist:mac:arm64
+        run: npm run build && npm run compile:electron && npm run build:skills && electron-builder --mac --arm64 --config scripts/electron-builder-config.cjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,9 +109,15 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Build OpenClaw Runtime (macOS x64)
+        if: ${{ github.event_name == 'push' || inputs.arch == 'x64' || inputs.arch == 'universal' }}
+        run: npm run openclaw:runtime:mac-x64
+        env:
+          OPENCLAW_FORCE_BUILD: 1
+
       - name: Build macOS x64
         if: ${{ github.event_name == 'push' || inputs.arch == 'x64' || inputs.arch == 'universal' }}
-        run: npm run dist:mac:x64
+        run: npm run build && npm run compile:electron && npm run build:skills && electron-builder --mac --x64 --config scripts/electron-builder-config.cjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,8 +159,13 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Build OpenClaw Runtime (macOS arm64 for universal)
+        run: npm run openclaw:runtime:mac-arm64
+        env:
+          OPENCLAW_FORCE_BUILD: 1
+
       - name: Build macOS Universal
-        run: npm run dist:mac:universal
+        run: npm run build && npm run compile:electron && npm run build:skills && electron-builder --mac --universal --config scripts/electron-builder-config.cjs
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
